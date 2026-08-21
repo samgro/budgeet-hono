@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Secrets
+# The whole point of the bearer token is that it isn't in the repo.
+.env
+.env.*
+!.env.example
+
+# Google service account key. Committing this hands over read access to
+# every account in the Tiller sheet.
+*-service-account*.json
+gcp-*.json
+service-account*.json
+credentials.json
+
+# Bruno reads secrets from a .env at the collection root.
+# The collection itself and its .bru files are committed.
+bruno/.env
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test + coverage
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Tooling caches
+.cache/
+.railway/
+
+# Claude Code — personal scope only.
+# CLAUDE.md and .claude/settings.json are committed.
+CLAUDE.local.md
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# NOT ignored, on purpose:
+#   bun.lock          — lockfile, commit it
+#   drizzle/          — generated migrations and meta, commit them
+#   bruno/            — API collection, commit it

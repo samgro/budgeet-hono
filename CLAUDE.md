@@ -54,4 +54,4 @@ Run `bun test` before finishing any task.
 ## Session protocol
 
 One Linear ticket per session (project `Budgeet`, team prefix `SDG`). Work the ticket's checklist top to
-bottom. Don't refactor code from an earlier epic — open a new ticket instead of widening the session.
+bottom. Don't refactor code from an earlier epic — open a new ticket instead of widening the session. After finishing, return a brief description of what was done, a clear instruction for how to manually validate. Ask me if everything looks good to commit, push, and close completed linear tickets.

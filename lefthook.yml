@@ -1,0 +1,12 @@
+# Bun doesn't reliably run npm lifecycle scripts, so `lefthook install` isn't
+# wired to `bun install` here — run it once by hand after cloning:
+#   bunx lefthook install
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: "*.{ts,tsx,js,jsx,json,jsonc}"
+      run: bunx biome check --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+      stage_fixed: true
+    test:
+      run: bun test

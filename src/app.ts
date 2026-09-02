@@ -14,11 +14,11 @@ export function createApp(apiToken: string) {
 
   app.route("/health", health)
 
-  app.notFound((c) => errorResponse(c, "NOT_FOUND", "No such route", 404))
+  app.notFound((context) => errorResponse(context, "NOT_FOUND", "No such route", 404))
 
-  app.onError((err, c) => {
-    console.error(err)
-    return errorResponse(c, "INTERNAL", "Something went wrong", 500)
+  app.onError((error, context) => {
+    console.error(error)
+    return errorResponse(context, "INTERNAL", "Something went wrong", 500)
   })
 
   return app

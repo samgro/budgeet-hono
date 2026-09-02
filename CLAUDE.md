@@ -38,6 +38,7 @@ Run `bun test` before finishing any task.
 ## Conventions
 
 - No semicolons. Biome v2 owns formatting; don't hand-format.
+- No single-letter or abbreviated variable names — `response` not `res`, `context` not `c`, `error` not `err`, `request` not `req`. Applies everywhere, including Hono handler params and tests.
 - Financial domain naming over abstract naming: `direction: "inflow" | "outflow"`, not `sentiment: "positive" | "negative"`.
 - Errors are always `{ error: { code, message } }`. Surface them; never swallow into `console.error`.
 - Pure logic goes in `src/lib/` and gets unit tests. Route handlers stay thin.

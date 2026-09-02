@@ -15,12 +15,12 @@ export function errorBody(code: ErrorCode, message: string): ErrorBody {
 }
 
 // Route/middleware convenience over the pure builder above — not itself unit
-// tested, since it's a one-line wrapper around c.json().
+// tested, since it's a one-line wrapper around context.json().
 export function errorResponse(
-  c: Context,
+  context: Context,
   code: ErrorCode,
   message: string,
   status: ContentfulStatusCode,
 ) {
-  return c.json(errorBody(code, message), status)
+  return context.json(errorBody(code, message), status)
 }

@@ -1,0 +1,16 @@
+meta {
+  name: Health
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/health
+  body: none
+  auth: inherit
+}
+
+docs {
+  Smoke test. Returns { ok: true } once SDG-184 lands.
+  SDG-197 extends this with lastSyncAt, lastSyncStatus, unclassifiedCount.
+}

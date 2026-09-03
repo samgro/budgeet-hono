@@ -21,7 +21,7 @@ Breaking either loses data silently instead of erroring.
 - `ai_` — Claude's inference.
 - `ugc_` — my edits. Never overwritten by anything.
 
-Precedence is `ugc > ai > raw`, resolved once in the `v_transactions` view. Read paths query the view.
+Precedence is `ugc > ai > raw`, resolved once in the `resolved_transactions` view. Read paths query the view.
 Never hand-roll a COALESCE in a handler — that gives the rule two definitions and they will diverge.
 
 ## Commands
@@ -38,7 +38,12 @@ Run `bun test` before finishing any task.
 ## Conventions
 
 - No semicolons. Biome v2 owns formatting; don't hand-format.
-- No single-letter or abbreviated variable names — `response` not `res`, `context` not `c`, `error` not `err`, `request` not `req`. Applies everywhere, including Hono handler params and tests.
+- No single-letter or abbreviated variable names — `response` not `res`, `context` not `c`, `error` not `err`, `request` not `req`. Applies everywhere, including Hono handler params, tests, Drizzle index-callback
+  parameters (`table`, not `t`), and SQL aliases inside `sql` templates.
+- No type-prefixed database object names — a view is `resolved_transactions`, never `v_transactions`.
+  `\dv`/`\dt` already say what kind of object something is; a prefix should carry information a reader
+  can't get any other way (see `raw_`/`ai_`/`ugc_` above, which prefix by provenance). Transcribe spec
+  snippets to this convention rather than copying past it.
 - Financial domain naming over abstract naming: `direction: "inflow" | "outflow"`, not `sentiment: "positive" | "negative"`.
 - Errors are always `{ error: { code, message } }`. Surface them; never swallow into `console.error`.
 - Pure logic goes in `src/lib/` and gets unit tests. Route handlers stay thin.
@@ -51,6 +56,14 @@ Run `bun test` before finishing any task.
 - **Map sheet columns by header text, never column letter.** Inserting a column shifts every letter to its right.
 - `raw_category_detailed` has no FK — Plaid emits codes ahead of our seed. Accept unknowns, report them.
 - Plaid's category hints are wrong often enough to matter. They're a prior, never a fact.
+- **Tiller emits PFC v1 category codes; this schema stores v2.** `categories.pfcv1_detailed` (a text array —
+  one v2 code, `OTHER_OTHER`, has two v1 aliases) carries the mapping. Sync (BUD-4) must normalize an
+  incoming v1 code to v2 before it reaches `raw_category_detailed`, or the unknown-categories report fires
+  on every run.
+- **`drizzle.config.ts` loads `.env.local` itself.** `drizzle-kit`'s own dotenv support only reads `.env`,
+  which this repo doesn't have, and whether `DATABASE_URL` reaches its process otherwise depends on how
+  it's invoked (`bunx` vs `bunx --bun`, nested `bun run`, ...) — unreliable enough that it isn't worth
+  chasing. Don't remove the loader thinking it's redundant with the shell.
 
 ## Session protocol
 

@@ -39,10 +39,15 @@ Ignore **Categories**, **Balance History**, **AutoCat**, **Tags**, **Monthly/Yea
 
 ### Three things the sheet reveals that will bite you
 
-1. **Your seed file is stale.** Live rows carry `INCOME_WAGES` and `TRANSFER_IN_CASH_ADVANCES_AND_LOANS`.
-   Neither exists in `seed-plaid-categories.ts` (which has `INCOME_SALARY` and no cash-advances code).
-   → `raw_category_detailed` must **not** carry a foreign key. Store it as free text and report unknowns
-   on the sync run. Only `ugc_category_detailed` is FK-constrained.
+1. **Tiller emits PFC v1, not v2.** Live rows carry `INCOME_WAGES` and `TRANSFER_IN_CASH_ADVANCES_AND_LOANS` —
+   not stale-seed gaps, but PFC **v1** category codes (Plaid's taxonomy CSV confirms it: existing Plaid
+   customers as of December 2025 default to v1). This schema stores v2, which the seed is correct against.
+   The mapping is well-behaved — 105 of 127 v2 codes name a v1 counterpart, and 101 of those are
+   byte-identical strings — so `categories.pfcv1_detailed` (a text array; `OTHER_OTHER` has two v1 aliases)
+   carries it, and sync normalizes v1 → v2 on the way in.
+   → `raw_category_detailed` must **still** not carry a foreign key: normalization only covers codes the
+   taxonomy CSV knows about. Store it as free text and report genuinely unknown codes on the sync run.
+   Only `ugc_category_detailed` is FK-constrained.
 2. **Plaid's hints are wrong often enough to matter.** `AUTOMATIC PAYMENT - THANK` (a $855.41 credit-card
    payment) is tagged `INCOME: INCOME_WAGES`. Treat the hint as a prior, never a fact.
 3. **Tiller has no `pending` concept.** It only writes reconciled transactions. The widget spec assumes
@@ -325,31 +330,32 @@ export const appState = pgTable("app_state", {
 
 ### View
 
-Every read path goes through this. No route hand-rolls the COALESCE.
+Every read path goes through this. No route hand-rolls the COALESCE. Named for what it does, not what it
+is — no `v_` type prefix; see CLAUDE.md's naming convention.
 
 ```sql
-create view v_transactions as
+create view resolved_transactions as
 select
-  t.id, t.account_id,
-  t.raw_date                                                       as date,
-  coalesce(t.ugc_amount, t.raw_amount)                             as amount,
-  coalesce(t.ugc_description, t.raw_merchant_name,
-           t.raw_description)                                      as description,
-  coalesce(t.ugc_category_detailed, t.ai_category_detailed,
-           t.raw_category_detailed)                                as category_detailed,
-  coalesce(t.ugc_budget_id, t.ai_budget_id)                        as budget_id,
-  coalesce(t.ugc_trip_id, t.ai_trip_id)                            as trip_id,
-  coalesce(t.ugc_subscription_id, t.ai_subscription_id)            as subscription_id,
-  (t.ugc_budget_id is not null)                                    as budget_is_confirmed,
-  t.direction, t.ugc_note, t.ugc_is_hidden,
-  t.raw_amount, t.raw_description, t.raw_merchant_name,
-  t.raw_category_detailed, t.ai_confidence, t.ai_reasoning,
+  transaction.id, transaction.account_id,
+  transaction.raw_date                                                     as date,
+  coalesce(transaction.ugc_amount, transaction.raw_amount)                 as amount,
+  coalesce(transaction.ugc_description, transaction.raw_merchant_name,
+           transaction.raw_description)                                    as description,
+  coalesce(transaction.ugc_category_detailed, transaction.ai_category_detailed,
+           transaction.raw_category_detailed)                              as category_detailed,
+  coalesce(transaction.ugc_budget_id, transaction.ai_budget_id)            as budget_id,
+  coalesce(transaction.ugc_trip_id, transaction.ai_trip_id)                as trip_id,
+  coalesce(transaction.ugc_subscription_id, transaction.ai_subscription_id) as subscription_id,
+  (transaction.ugc_budget_id is not null)                                  as budget_is_confirmed,
+  transaction.direction, transaction.ugc_note, transaction.ugc_is_hidden,
+  transaction.raw_amount, transaction.raw_description, transaction.raw_merchant_name,
+  transaction.raw_category_detailed, transaction.ai_confidence, transaction.ai_reasoning,
   coalesce((
-    select jsonb_agg(jsonb_build_object('id', tg.id, 'name', tg.name, 'source', tt.source))
-    from transaction_tags tt join tags tg on tg.id = tt.tag_id
-    where tt.transaction_id = t.id
-  ), '[]'::jsonb)                                                  as tags
-from transactions t;
+    select jsonb_agg(jsonb_build_object('id', tag.id, 'name', tag.name, 'source', transaction_tag.source))
+    from transaction_tags transaction_tag join tags tag on tag.id = transaction_tag.tag_id
+    where transaction_tag.transaction_id = transaction.id
+  ), '[]'::jsonb)                                                          as tags
+from transactions transaction;
 ```
 
 ---
@@ -529,10 +535,15 @@ app.use("*", async (c, next) => {
 
 ```
 src/
-  index.ts            # Hono app, middleware, route mounting
-  db/{client,schema,seed-categories}.ts
+  index.ts            # env read + fail-fast + Bun server export
+  app.ts              # createApp() — Hono instance, middleware, route mounting
+  middleware/auth.ts
+  db/
+    client.ts, schema.ts, testing.ts   # Neon client, tables/enums/view, PGlite test harness
+    seeds/{index,categories,system-budget}.ts
+    seeds/pfc-taxonomy-all.csv         # committed, source of the category seed
   routes/{sync,transactions,budgets,trips,tags,subscriptions,accounts,standing,classify}.ts
-  lib/{sheets,tiller-map,amounts,standing,prefilter,claude}.ts   # pure fns — the test surface
+  lib/{sheets,tiller-map,amounts,standing,prefilter,claude,csv,pfc}.ts   # pure fns — the test surface
 bruno/                # collection, committed
 ```
 

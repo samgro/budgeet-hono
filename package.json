@@ -8,7 +8,11 @@
     "start": "bun run src/index.ts",
     "test": "bun test",
     "check": "biome check --write",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:generate": "bunx drizzle-kit generate",
+    "db:migrate": "bunx drizzle-kit migrate",
+    "db:push": "bunx drizzle-kit push",
+    "db:seed": "bun run src/db/seeds/index.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.123.0",
@@ -19,6 +23,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",
+    "@electric-sql/pglite": "^0.5.8",
     "@types/bun": "latest",
     "drizzle-kit": "^0.31.10",
     "lefthook": "^2.1.12",

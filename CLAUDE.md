@@ -40,6 +40,14 @@ Run `bun test` before finishing any task.
 Push directly to `main`. No feature branches, no PRs — this is a single-developer repo and the
 extra branch is pure overhead. Commit with `git commit` on `main` and `git push` when asked.
 
+## Manual edits
+
+I edit files by hand while reviewing your work. If a file you've touched has changed on disk since,
+treat that as deliberate, not a mistake to correct — read it and build on the new version. If a change
+looks accidental (a stray reformat, a partial edit, something that contradicts a convention above in a
+way that looks unintentional), don't silently "fix" it back — ask me first. Same bar for reverting or
+overwriting a manual edit outright: confirm before you do it.
+
 ## Conventions
 
 - No semicolons. Biome v2 owns formatting; don't hand-format.

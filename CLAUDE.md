@@ -35,6 +35,11 @@ bunx drizzle-kit push       # apply schema to the Neon branch
 
 Run `bun test` before finishing any task.
 
+## Git
+
+Push directly to `main`. No feature branches, no PRs — this is a single-developer repo and the
+extra branch is pure overhead. Commit with `git commit` on `main` and `git push` when asked.
+
 ## Conventions
 
 - No semicolons. Biome v2 owns formatting; don't hand-format.

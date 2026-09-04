@@ -4,7 +4,16 @@
 import type { Context } from "hono"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 
-export type ErrorCode = "UNAUTHORIZED" | "NOT_FOUND" | "BAD_REQUEST" | "CONFLICT" | "INTERNAL"
+export type ErrorCode =
+  | "UNAUTHORIZED"
+  | "NOT_FOUND"
+  | "BAD_REQUEST"
+  | "CONFLICT"
+  | "INTERNAL"
+  // A dependency we don't control failed - Google Sheets auth/quota/outage,
+  // eventually Claude. Distinct from INTERNAL so a transient upstream
+  // problem doesn't get reported as our bug.
+  | "UPSTREAM"
 
 export interface ErrorBody {
   error: { code: ErrorCode; message: string }

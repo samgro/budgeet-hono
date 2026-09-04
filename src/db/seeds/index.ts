@@ -15,3 +15,7 @@ console.log(`Seeded ${categoryCount} categories.`)
 
 await seedSystemBudget(database)
 console.log("Seeded the Unassigned system budget.")
+
+// neon-serverless holds real sockets open - without this the script prints
+// its output and then hangs instead of returning to the shell.
+await database.$client.end()

@@ -1,0 +1,19 @@
+meta {
+  name: Sync
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/sync
+  body: none
+  auth: inherit
+}
+
+docs {
+  Default window: first of the current month. A cold database has no history,
+  so run "Sync (backfill)" once by hand first.
+
+  An immediate re-run should come back with skipped: true and the same
+  syncRunId - that's the 5-minute min-interval guard, not a bug.
+}

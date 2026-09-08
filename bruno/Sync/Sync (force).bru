@@ -1,0 +1,18 @@
+meta {
+  name: Sync (force)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/sync?force=true
+  body: none
+  auth: inherit
+}
+
+docs {
+  Bypasses the min-interval guard only - never the advisory lock. Use this to
+  force a real second run for the invariant check: hand-edit a synced
+  transaction's ugc_/ai_ columns in the Neon console, run this, and confirm
+  those columns are unchanged while raw_* refreshed.
+}

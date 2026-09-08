@@ -1,0 +1,17 @@
+meta {
+  name: Sync (backfill)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/sync?since=2026-01-01
+  body: none
+  auth: inherit
+}
+
+docs {
+  Cold-start backfill - the default window is month-to-date, which is empty
+  on a fresh database. Run this once by hand after migrating; every run after
+  that can rely on the default window (or force it, see "Sync (force)").
+}

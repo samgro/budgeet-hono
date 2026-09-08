@@ -1,0 +1,24 @@
+meta {
+  name: Transactions
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/transactions?limit=10
+  body: none
+  auth: inherit
+}
+
+vars:post-response {
+  transactionsCursor: res.body.nextCursor
+  transactionId: res.body.transactions[0].id
+}
+
+docs {
+  limit=10 deliberately, so a real dataset actually produces a nextCursor -
+  run this first to capture transactionsCursor and transactionId for
+  "Transactions (next page)" and "Transaction by id" below. Each row is
+  directly renderable: account, budget, category, and subscription are
+  nested with display fields (name, color, emoji, iconUrl), not just ids.
+}

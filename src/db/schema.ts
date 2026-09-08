@@ -102,6 +102,9 @@ export const budgets = pgTable("budgets", {
   // Drives the widget: only `discretionary` rolls into the hero figure;
   // `essential` gets a right-column row; `excluded` never appears.
   class: budgetClass("class").notNull(),
+  // Display only - no precedence rule, unlike the ugc_/ai_/raw_ columns.
+  color: text("color"),
+  emoji: text("emoji"),
   targetAmount: numeric("target_amount", { precision: 14, scale: 2 }), // per month
   linkedCategories: jsonb("linked_categories").$type<string[]>().default([]).notNull(),
   sortOrder: integer("sort_order").default(0).notNull(),
@@ -129,6 +132,7 @@ export const tags = pgTable(
     // "Anything for Pixel — vet, food, litter, boarding."
     description: text("description"),
     color: text("color"),
+    emoji: text("emoji"),
 
     // trip-only, null for every other kind
     startDate: date("start_date"),
@@ -317,6 +321,9 @@ export const transactions = pgTable(
   },
   (table) => [
     index("idx_txn_date").on(table.rawDate),
+    // Serves the keyset pagination in GET /transactions - (date desc, id desc)
+    // is a backward scan over this, no separate DESC index needed.
+    index("idx_txn_date_id").on(table.rawDate, table.id),
     index("idx_txn_account").on(table.accountId),
     index("idx_txn_merchant").on(table.rawMerchantName),
     index("idx_txn_budget").on(table.ugcBudgetId, table.aiBudgetId),
@@ -408,6 +415,8 @@ export const resolvedTransactions = pgView("resolved_transactions", {
       name: string
       parentId: string | null
       kind: "label" | "trip" | "business"
+      color: string | null
+      emoji: string | null
       path: string
       source: "ai" | "ugc"
     }[]
@@ -463,6 +472,8 @@ export const resolvedTransactions = pgView("resolved_transactions", {
             'name', tag.name,
             'parentId', tag.parent_id,
             'kind', tag.kind,
+            'color', tag.color,
+            'emoji', tag.emoji,
             'path', case
               when parent.id is null then tag.name
               else parent.name || ' / ' || tag.name
@@ -479,4 +490,34 @@ export const resolvedTransactions = pgView("resolved_transactions", {
       '[]'::jsonb
     ) as tags
   from transactions transaction
+`)
+
+// ── resolved_accounts (view) ─────────────────────────────────────────────
+// Same rule as resolved_transactions: the account display name is a
+// precedence rule (ugc_name > raw_name), so it gets exactly one definition
+// here rather than a COALESCE repeated in every route that joins accounts.
+export const resolvedAccounts = pgView("resolved_accounts", {
+  id: text("id"),
+  name: text("name"),
+  rawName: text("raw_name"),
+  rawMask: text("raw_mask"),
+  rawInstitution: text("raw_institution"),
+  rawType: text("raw_type"),
+  rawClass: text("raw_class"),
+  rawBalance: numeric("raw_balance", { precision: 14, scale: 2 }),
+  rawBalanceAsOf: timestamp("raw_balance_as_of", { withTimezone: true }),
+  ugcIsHidden: boolean("ugc_is_hidden"),
+}).as(sql`
+  select
+    account.id,
+    coalesce(account.ugc_name, account.raw_name) as name,
+    account.raw_name,
+    account.raw_mask,
+    account.raw_institution,
+    account.raw_type,
+    account.raw_class,
+    account.raw_balance,
+    account.raw_balance_as_of,
+    account.ugc_is_hidden
+  from accounts account
 `)

@@ -5,6 +5,7 @@ import type { SheetsClient } from "./lib/sheets"
 import { bearerAuth } from "./middleware/auth"
 import { health } from "./routes/health"
 import { createSyncRoute } from "./routes/sync"
+import { createTransactionsRoute } from "./routes/transactions"
 
 // Takes the token and its dependencies as arguments rather than reading
 // process.env or constructing clients itself, so tests can construct a real
@@ -18,6 +19,7 @@ export function createApp(apiToken: string, database: DatabaseClient, sheetsClie
 
   app.route("/health", health)
   app.route("/sync", createSyncRoute(database, sheetsClient))
+  app.route("/transactions", createTransactionsRoute(database))
 
   app.notFound((context) => errorResponse(context, "NOT_FOUND", "No such route", 404))
 

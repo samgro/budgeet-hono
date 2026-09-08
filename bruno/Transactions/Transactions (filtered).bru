@@ -1,0 +1,17 @@
+meta {
+  name: Transactions (filtered)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/transactions?from=2026-01-01&to=2026-12-31&unassigned=true&limit=10
+  body: none
+  auth: inherit
+}
+
+docs {
+  unassigned=true matches only rows where the resolved budget_id is null -
+  never-classified rows, not orphans sitting on the "unassigned" system
+  budget from a deleted budget. from/to are inclusive on both boundaries.
+}

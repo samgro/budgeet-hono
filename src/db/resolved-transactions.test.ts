@@ -50,7 +50,7 @@ beforeAll(async () => {
 
   await database.insert(tags).values([
     { id: "tag-ai", name: "ai-tag" },
-    { id: "tag-ugc", name: "ugc-tag" },
+    { id: "tag-ugc", name: "ugc-tag", color: "#8b5cf6", emoji: "🐈" },
     { id: "cat", name: "cat", kind: "label" },
     {
       id: "trip-ai",
@@ -273,6 +273,35 @@ describe("resolved_transactions", () => {
     expect(nestedTag?.parentId).toBe("cat")
     const rootTag = row?.tags?.find((tag) => tag.id === "tag-ai")
     expect(rootTag?.path).toBe("ai-tag")
+  })
+
+  test("tags: color and emoji come through from the tag row", async () => {
+    await database.insert(transactions).values({ ...baseTransaction("txn-tags-color") })
+    await database.insert(transactionTags).values({
+      transactionId: "txn-tags-color",
+      tagId: "tag-ugc",
+      kind: "label",
+      source: "ugc",
+    })
+    const row = await resolvedRow("txn-tags-color")
+    const tag = row?.tags?.find((tag) => tag.id === "tag-ugc")
+    expect(tag?.color).toBe("#8b5cf6")
+    expect(tag?.emoji).toBe("🐈")
+  })
+
+  test("tags: color and emoji are null when the tag has none", async () => {
+    await database.insert(transactions).values({ ...baseTransaction("txn-tags-no-color") })
+    await database.insert(transactionTags).values({
+      transactionId: "txn-tags-no-color",
+      tagId: "tag-ai",
+      kind: "label",
+      source: "ai",
+      aiConfidence: 0.9,
+    })
+    const row = await resolvedRow("txn-tags-no-color")
+    const tag = row?.tags?.find((tag) => tag.id === "tag-ai")
+    expect(tag?.color).toBeNull()
+    expect(tag?.emoji).toBeNull()
   })
 
   test("tags: rejected rows are absent", async () => {

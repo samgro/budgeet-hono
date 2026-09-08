@@ -1,0 +1,20 @@
+meta {
+  name: Transactions (next page)
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/transactions?limit=10&cursor={{transactionsCursor}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Run "Transactions" first to populate the transactionsCursor runtime
+  variable, or paste a nextCursor value into it by hand.
+
+  The DoD check: run "Transactions", then run this repeatedly. Confirm no
+  transaction id repeats across pages, dates never go backwards then
+  forwards, and the walk ends with "nextCursor": null.
+}

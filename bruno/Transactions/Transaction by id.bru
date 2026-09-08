@@ -1,0 +1,21 @@
+meta {
+  name: Transaction by id
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/transactions/{{transactionId}}
+  body: none
+  auth: inherit
+}
+
+docs {
+  Run "Transactions" first to populate the transactionId runtime variable,
+  or paste a known transaction id into it by hand.
+
+  Adds corrections[] on top of the list shape - empty until BUD-6's
+  PATCH /transactions/:id writes any. Unlike the list, this route ignores
+  ugc_is_hidden at both the transaction and account level: an explicit
+  lookup by id always returns the row.
+}

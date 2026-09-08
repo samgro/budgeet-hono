@@ -69,8 +69,11 @@ function splitCategoryHint(hint: string): CategoryHint {
 export interface CategoryAliases {
   // v2 detailed -> v2 primary
   knownDetailed: Map<string, string>
-  // v1 alias -> v2 detailed. Includes identity entries (v1 code == v2 code),
-  // since most of the 127 codes don't drift.
+  // v1 alias -> v2 detailed. Only carries entries where the two codes
+  // actually differ - resolveCategory's own fallback (`?? hint.detailed`)
+  // below already covers the ~120 codes that don't drift, so
+  // loadCategoryAliases (lib/ingest.ts) doesn't bother writing identity
+  // entries for them.
   v1ToV2: Map<string, string>
 }
 

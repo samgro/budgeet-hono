@@ -7,8 +7,11 @@
 
 import { sql } from "drizzle-orm"
 import {
+  type AnyPgColumn,
   boolean,
+  check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -20,6 +23,8 @@ import {
   real,
   text,
   timestamp,
+  unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core"
 
 export const accountType = pgEnum("account_type", [
@@ -45,11 +50,11 @@ export const correctionField = pgEnum("correction_field", [
   "category",
   "description",
   "amount",
-  "trip",
   "tag",
   "subscription",
 ])
 export const syncStatus = pgEnum("sync_status", ["running", "ok", "error"])
+export const tagKind = pgEnum("tag_kind", ["label", "trip", "business"])
 
 // ── accounts ────────────────────────────────────────────────────────────
 export const accounts = pgTable("accounts", {
@@ -107,35 +112,83 @@ export const budgets = pgTable("budgets", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 })
 
-// ── trips ───────────────────────────────────────────────────────────────
-// A date window is a *candidate* filter, not an assignment: the mortgage that
-// autopays mid-trip is not trip spend. Claude decides inside the window.
-export const trips = pgTable(
-  "trips",
+// ── tags ────────────────────────────────────────────────────────────────
+// A trip is a tag with a date window; a business is a tag with children -
+// unified here rather than kept as separate tables (SDG-209). A date window
+// is a *candidate* filter, not an assignment: the mortgage that autopays
+// mid-trip is not trip spend. Claude decides inside the window, and
+// transaction_tags.isRejected is what lets it say "no" and have that stick.
+export const tags = pgTable(
+  "tags",
   {
     id: text("id").primaryKey(),
-    name: text("name").notNull(), // "AU/NZ Trip"
-    startDate: date("start_date").notNull(),
-    endDate: date("end_date").notNull(),
-    // Optional hints for Claude: destinations, who came, what counts.
+    parentId: text("parent_id").references((): AnyPgColumn => tags.id, { onDelete: "restrict" }),
+    kind: tagKind("kind").default("label").notNull(),
+    name: text("name").notNull(), // "food", not "cat / food"
+    // Natural-language rule, same job as budgets.description.
+    // "Anything for Pixel — vet, food, litter, boarding."
     description: text("description"),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [index("idx_trips_range").on(table.startDate, table.endDate)],
-)
+    color: text("color"),
 
-// ── tags ────────────────────────────────────────────────────────────────
-export const tags = pgTable("tags", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull().unique(), // "divorce", "cat"
-  // Natural-language rule, same job as budgets.description.
-  // "Anything for Pixel — vet, food, litter, boarding."
-  description: text("description"),
-  color: text("color"),
-  isArchived: boolean("is_archived").default(false).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-})
+    // trip-only, null for every other kind
+    startDate: date("start_date"),
+    endDate: date("end_date"),
+
+    isArchived: boolean("is_archived").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+
+    // Caps nesting at two levels declaratively: a child is depth 1 and its
+    // parentDepth is 0, so the composite FK below can only ever resolve to a
+    // root. No trigger, no app-level check.
+    depth: integer("depth").generatedAlwaysAs(sql`case when parent_id is null then 0 else 1 end`),
+    parentDepth: integer("parent_depth").generatedAlwaysAs(
+      sql`case when parent_id is null then null else 0 end`,
+    ),
+  },
+  (table) => [
+    // Postgres permits FKs onto generated columns except with set null/set
+    // default actions, hence restrict on parentId above - which is the
+    // behaviour we want anyway: deleting `cat` out from under `cat -> food`
+    // should fail loudly rather than silently orphan.
+    foreignKey({
+      columns: [table.parentId, table.parentDepth],
+      foreignColumns: [table.id, table.depth],
+    }),
+    // Makes a child inherit its parent's kind. Without this a `label` could
+    // hang off a `business` root and quietly escape the /standing exclusion.
+    //
+    // Kept declared here even though `bunx drizzle-kit push` cannot apply a
+    // *change* to it without crashing (a confirmed drizzle-kit 0.31.10 bug:
+    // a composite unique constraint targeted by more than one FK - this one
+    // is targeted by both this FK and transaction_tags' below - is always
+    // reported as needing a drop+recreate, even when nothing changed, and
+    // the generated DROP isn't ordered after its dependent FKs, so it fails
+    // with "cannot drop constraint ... because other objects depend on it".
+    // uq_tags_id_depth above has only one dependent FK and never hits this.
+    // Declaring it here anyway - matching the live database exactly - is
+    // deliberate: if schema.ts stopped declaring it, a *future*, bug-fixed
+    // drizzle-kit would see "the database has a constraint schema.ts doesn't
+    // want" and actually drop it. A push touching this table will keep
+    // failing loudly until drizzle-kit is upgraded past this bug; that's a
+    // safe failure (nothing partially applies), not a silent one. See
+    // drizzle-team/drizzle-orm#4789 for the same class of bug.
+    foreignKey({
+      columns: [table.parentId, table.kind],
+      foreignColumns: [table.id, table.kind],
+    }),
+    unique("uq_tags_id_depth").on(table.id, table.depth),
+    unique("uq_tags_id_kind").on(table.id, table.kind),
+    // Wrapped in coalesce because Postgres treats NULLs as distinct in
+    // unique indexes and would otherwise permit two root tags named "cat".
+    // "food" under `cat` and "food" under `groceries` are different tags -
+    // this replaces a plain unique() on name, which can no longer hold.
+    uniqueIndex("uq_tags_sibling_name").on(sql`coalesce(parent_id, '')`, table.name),
+    index("idx_tags_parent").on(table.parentId),
+    index("idx_tags_trip_range").on(table.startDate, table.endDate).where(sql`kind = 'trip'`),
+    check("trip_has_window", sql`(kind = 'trip') = (start_date is not null)`),
+    check("window_ordered", sql`end_date is null or end_date >= start_date`),
+  ],
+)
 
 export const transactionTags = pgTable(
   "transaction_tags",
@@ -143,16 +196,43 @@ export const transactionTags = pgTable(
     transactionId: text("transaction_id")
       .notNull()
       .references(() => transactions.id, { onDelete: "cascade" }),
+    // The plain FK to tags.id and the composite FK to (tags.id, tags.kind)
+    // below are both real, both declared, and deliberately redundant: the
+    // plain one is drizzle-kit's own auto-derived shape for a text column
+    // pointing at tags.id, and removing it would make schema.ts describe
+    // less than what the database actually enforces.
     tagId: text("tag_id")
       .notNull()
       .references(() => tags.id, { onDelete: "cascade" }),
+    kind: tagKind("kind").notNull(), // denormalized; held honest by the composite FK below
     source: attribution("source").notNull(),
+    // Tombstone for a trip/business the model guessed and you rejected - see
+    // the tags comment above. Only a ugc row may be rejected: the model
+    // doesn't get to tombstone its own suggestions, it just doesn't re-emit
+    // them.
+    isRejected: boolean("is_rejected").default(false).notNull(),
     aiConfidence: real("ai_confidence"), // null when source = 'ugc'
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.transactionId, table.tagId] }),
+    // See the comment on tags' matching FK above for why this is declared
+    // even though a `push` touching this table will fail on the drizzle-kit
+    // bug it triggers.
+    foreignKey({
+      columns: [table.tagId, table.kind],
+      foreignColumns: [tags.id, tags.kind],
+    }).onDelete("cascade"),
     index("idx_txn_tags_tag").on(table.tagId),
+    // Keyed on (transactionId, kind) rather than one index per kind, so a
+    // business trip is expressible (one trip row plus one business row)
+    // while two businesses on one transaction is not. Encodes "label is the
+    // only multi-valued kind" - the durable version of the rule, and it
+    // absorbs a future kind without another index.
+    uniqueIndex("uq_txn_one_exclusive_kind")
+      .on(table.transactionId, table.kind)
+      .where(sql`kind <> 'label' and not is_rejected`),
+    check("rejected_is_ugc", sql`not is_rejected or source = 'ugc'`),
   ],
 )
 
@@ -202,7 +282,6 @@ export const transactions = pgTable(
 
     // ---- ai: written by /classify, never by /sync ----
     aiBudgetId: text("ai_budget_id").references(() => budgets.id, { onDelete: "set null" }),
-    aiTripId: text("ai_trip_id").references(() => trips.id, { onDelete: "set null" }),
     aiSubscriptionId: text("ai_subscription_id").references(() => subscriptions.id, {
       onDelete: "set null",
     }),
@@ -218,7 +297,6 @@ export const transactions = pgTable(
     ugcDescription: text("ugc_description"),
     ugcCategoryDetailed: text("ugc_category_detailed").references(() => categories.detailed),
     ugcBudgetId: text("ugc_budget_id").references(() => budgets.id, { onDelete: "set null" }),
-    ugcTripId: text("ugc_trip_id").references(() => trips.id, { onDelete: "set null" }),
     ugcSubscriptionId: text("ugc_subscription_id").references(() => subscriptions.id, {
       onDelete: "set null",
     }),
@@ -242,7 +320,6 @@ export const transactions = pgTable(
     index("idx_txn_account").on(table.accountId),
     index("idx_txn_merchant").on(table.rawMerchantName),
     index("idx_txn_budget").on(table.ugcBudgetId, table.aiBudgetId),
-    index("idx_txn_trip").on(table.ugcTripId, table.aiTripId),
     index("idx_txn_unclassified")
       .on(table.rawDate)
       .where(sql`ai_budget_id is null and ugc_budget_id is null`),
@@ -313,6 +390,7 @@ export const resolvedTransactions = pgView("resolved_transactions", {
   categoryDetailed: text("category_detailed"),
   budgetId: text("budget_id"),
   tripId: text("trip_id"),
+  businessId: text("business_id"),
   subscriptionId: text("subscription_id"),
   budgetIsConfirmed: boolean("budget_is_confirmed"),
   direction: text("direction"),
@@ -324,7 +402,16 @@ export const resolvedTransactions = pgView("resolved_transactions", {
   rawCategoryDetailed: text("raw_category_detailed"),
   aiConfidence: real("ai_confidence"),
   aiReasoning: text("ai_reasoning"),
-  tags: jsonb("tags").$type<{ id: string; name: string; source: "ai" | "ugc" }[]>(),
+  tags: jsonb("tags").$type<
+    {
+      id: string
+      name: string
+      parentId: string | null
+      kind: "label" | "trip" | "business"
+      path: string
+      source: "ai" | "ugc"
+    }[]
+  >(),
 }).as(sql`
   select
     transaction.id,
@@ -342,7 +429,21 @@ export const resolvedTransactions = pgView("resolved_transactions", {
       transaction.raw_category_detailed
     ) as category_detailed,
     coalesce(transaction.ugc_budget_id, transaction.ai_budget_id) as budget_id,
-    coalesce(transaction.ugc_trip_id, transaction.ai_trip_id) as trip_id,
+    (
+      select transaction_tag.tag_id
+      from transaction_tags transaction_tag
+      where transaction_tag.transaction_id = transaction.id
+        and transaction_tag.kind = 'trip'
+        and not transaction_tag.is_rejected
+    ) as trip_id,
+    (
+      select coalesce(tag.parent_id, tag.id)
+      from transaction_tags transaction_tag
+      join tags tag on tag.id = transaction_tag.tag_id
+      where transaction_tag.transaction_id = transaction.id
+        and transaction_tag.kind = 'business'
+        and not transaction_tag.is_rejected
+    ) as business_id,
     coalesce(transaction.ugc_subscription_id, transaction.ai_subscription_id) as subscription_id,
     (transaction.ugc_budget_id is not null) as budget_is_confirmed,
     transaction.direction,
@@ -357,11 +458,23 @@ export const resolvedTransactions = pgView("resolved_transactions", {
     coalesce(
       (
         select jsonb_agg(
-          jsonb_build_object('id', tag.id, 'name', tag.name, 'source', transaction_tag.source)
+          jsonb_build_object(
+            'id', tag.id,
+            'name', tag.name,
+            'parentId', tag.parent_id,
+            'kind', tag.kind,
+            'path', case
+              when parent.id is null then tag.name
+              else parent.name || ' / ' || tag.name
+            end,
+            'source', transaction_tag.source
+          )
         )
         from transaction_tags transaction_tag
         join tags tag on tag.id = transaction_tag.tag_id
+        left join tags parent on parent.id = tag.parent_id
         where transaction_tag.transaction_id = transaction.id
+          and not transaction_tag.is_rejected
       ),
       '[]'::jsonb
     ) as tags

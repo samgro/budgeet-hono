@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, test } from "bun:test"
 import { eq, getTableColumns } from "drizzle-orm"
-import { accounts, budgets, categories, subscriptions, transactions, trips } from "../db/schema"
+import { accounts, budgets, categories, subscriptions, transactions } from "../db/schema"
 import { createTestDatabase } from "../db/testing"
 import { loadCategoryAliases, upsertAccounts, upsertTransactions } from "./ingest"
 import type { TillerAccount, TillerTransaction } from "./tiller-map"
@@ -74,9 +74,6 @@ describe("upsertTransactions - the raw-only invariant", () => {
       .insert(budgets)
       .values({ id: "budget-1", name: "Budget", class: "discretionary" })
     await database
-      .insert(trips)
-      .values({ id: "trip-1", name: "Trip", startDate: "2026-01-01", endDate: "2026-01-10" })
-    await database
       .insert(subscriptions)
       .values({ id: "subscription-1", name: "Sub", merchantPattern: "test" })
 
@@ -93,7 +90,6 @@ describe("upsertTransactions - the raw-only invariant", () => {
       .update(transactions)
       .set({
         aiBudgetId: "budget-1",
-        aiTripId: "trip-1",
         aiSubscriptionId: "subscription-1",
         aiCategoryDetailed: "TEST_CATEGORY",
         aiConfidence: 0.9,
@@ -104,7 +100,6 @@ describe("upsertTransactions - the raw-only invariant", () => {
         ugcDescription: "Corrected description",
         ugcCategoryDetailed: "TEST_CATEGORY",
         ugcBudgetId: "budget-1",
-        ugcTripId: "trip-1",
         ugcSubscriptionId: "subscription-1",
         ugcNote: "Personal note",
         ugcIsHidden: true,

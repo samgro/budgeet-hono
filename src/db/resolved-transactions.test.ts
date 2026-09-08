@@ -14,7 +14,6 @@ import {
   tags,
   transactions,
   transactionTags,
-  trips,
 } from "./schema"
 import { createTestDatabase } from "./testing"
 
@@ -38,11 +37,6 @@ beforeAll(async () => {
     { id: "budget-ugc", name: "UGC Budget", class: "discretionary" },
   ])
 
-  await database.insert(trips).values([
-    { id: "trip-ai", name: "AI Trip", startDate: "2026-01-01", endDate: "2026-01-10" },
-    { id: "trip-ugc", name: "UGC Trip", startDate: "2026-02-01", endDate: "2026-02-10" },
-  ])
-
   await database.insert(subscriptions).values([
     { id: "subscription-ai", name: "AI Sub", merchantPattern: "netflix" },
     { id: "subscription-ugc", name: "UGC Sub", merchantPattern: "spotify" },
@@ -57,7 +51,29 @@ beforeAll(async () => {
   await database.insert(tags).values([
     { id: "tag-ai", name: "ai-tag" },
     { id: "tag-ugc", name: "ugc-tag" },
+    { id: "cat", name: "cat", kind: "label" },
+    {
+      id: "trip-ai",
+      name: "AI Trip",
+      kind: "trip",
+      startDate: "2026-01-01",
+      endDate: "2026-01-10",
+    },
+    {
+      id: "trip-ugc",
+      name: "UGC Trip",
+      kind: "trip",
+      startDate: "2026-02-01",
+      endDate: "2026-02-10",
+    },
+    { id: "biz-root", name: "DPHQ", kind: "business" },
   ])
+  await database
+    .insert(tags)
+    .values([{ id: "cat-food", parentId: "cat", name: "food", kind: "label" }])
+  await database
+    .insert(tags)
+    .values([{ id: "biz-child", parentId: "biz-root", name: "Advertising", kind: "business" }])
 })
 
 function baseTransaction(id: string) {
@@ -141,9 +157,11 @@ describe("resolved_transactions", () => {
     await database.insert(transactions).values({
       ...baseTransaction("txn-links-ai"),
       aiBudgetId: "budget-ai",
-      aiTripId: "trip-ai",
       aiSubscriptionId: "subscription-ai",
     })
+    await database
+      .insert(transactionTags)
+      .values({ transactionId: "txn-links-ai", tagId: "trip-ai", kind: "trip", source: "ai" })
     const aiRow = await resolvedRow("txn-links-ai")
     expect(aiRow?.budgetId).toBe("budget-ai")
     expect(aiRow?.tripId).toBe("trip-ai")
@@ -152,12 +170,23 @@ describe("resolved_transactions", () => {
     await database.insert(transactions).values({
       ...baseTransaction("txn-links-ugc"),
       aiBudgetId: "budget-ai",
-      aiTripId: "trip-ai",
       aiSubscriptionId: "subscription-ai",
       ugcBudgetId: "budget-ugc",
-      ugcTripId: "trip-ugc",
       ugcSubscriptionId: "subscription-ugc",
     })
+    // ai's trip guess is rejected, ugc assigns a different trip - the resolved
+    // trip_id must reflect the live (non-rejected) assignment, not either
+    // source unconditionally.
+    await database.insert(transactionTags).values([
+      {
+        transactionId: "txn-links-ugc",
+        tagId: "trip-ai",
+        kind: "trip",
+        source: "ugc",
+        isRejected: true,
+      },
+      { transactionId: "txn-links-ugc", tagId: "trip-ugc", kind: "trip", source: "ugc" },
+    ])
     const ugcRow = await resolvedRow("txn-links-ugc")
     expect(ugcRow?.budgetId).toBe("budget-ugc")
     expect(ugcRow?.tripId).toBe("trip-ugc")
@@ -170,6 +199,31 @@ describe("resolved_transactions", () => {
     expect(row?.budgetId).toBeNull()
     expect(row?.tripId).toBeNull()
     expect(row?.subscriptionId).toBeNull()
+  })
+
+  test("business_id resolves to the root, not the tagged child", async () => {
+    await database.insert(transactions).values({ ...baseTransaction("txn-business") })
+    await database.insert(transactionTags).values({
+      transactionId: "txn-business",
+      tagId: "biz-child",
+      kind: "business",
+      source: "ai",
+    })
+    const row = await resolvedRow("txn-business")
+    expect(row?.businessId).toBe("biz-root")
+  })
+
+  test("business_id null when rejected", async () => {
+    await database.insert(transactions).values({ ...baseTransaction("txn-business-rejected") })
+    await database.insert(transactionTags).values({
+      transactionId: "txn-business-rejected",
+      tagId: "biz-root",
+      kind: "business",
+      source: "ugc",
+      isRejected: true,
+    })
+    const row = await resolvedRow("txn-business-rejected")
+    expect(row?.businessId).toBeNull()
   })
 
   test("budget_is_confirmed reflects whether ugc_budget_id is set", async () => {
@@ -196,17 +250,42 @@ describe("resolved_transactions", () => {
     expect((await resolvedRow("txn-direction-inflow"))?.direction).toBe("inflow")
   })
 
-  test("tags: aggregates with each row's source stamp", async () => {
+  test("tags: aggregates with each row's source stamp and resolved path", async () => {
     await database.insert(transactions).values({ ...baseTransaction("txn-tags") })
     await database.insert(transactionTags).values([
-      { transactionId: "txn-tags", tagId: "tag-ai", source: "ai", aiConfidence: 0.9 },
-      { transactionId: "txn-tags", tagId: "tag-ugc", source: "ugc" },
+      {
+        transactionId: "txn-tags",
+        tagId: "tag-ai",
+        kind: "label",
+        source: "ai",
+        aiConfidence: 0.9,
+      },
+      { transactionId: "txn-tags", tagId: "tag-ugc", kind: "label", source: "ugc" },
+      { transactionId: "txn-tags", tagId: "cat-food", kind: "label", source: "ugc" },
     ])
 
     const row = await resolvedRow("txn-tags")
-    expect(row?.tags).toHaveLength(2)
-    expect(row?.tags?.map((tag) => tag.source).sort()).toEqual(["ai", "ugc"])
-    expect(row?.tags?.map((tag) => tag.name).sort()).toEqual(["ai-tag", "ugc-tag"])
+    expect(row?.tags).toHaveLength(3)
+    expect(row?.tags?.map((tag) => tag.source).sort()).toEqual(["ai", "ugc", "ugc"])
+    expect(row?.tags?.map((tag) => tag.name).sort()).toEqual(["ai-tag", "food", "ugc-tag"])
+    const nestedTag = row?.tags?.find((tag) => tag.id === "cat-food")
+    expect(nestedTag?.path).toBe("cat / food")
+    expect(nestedTag?.parentId).toBe("cat")
+    const rootTag = row?.tags?.find((tag) => tag.id === "tag-ai")
+    expect(rootTag?.path).toBe("ai-tag")
+  })
+
+  test("tags: rejected rows are absent", async () => {
+    await database.insert(transactions).values({ ...baseTransaction("txn-tags-rejected") })
+    await database.insert(transactionTags).values({
+      transactionId: "txn-tags-rejected",
+      tagId: "tag-ai",
+      kind: "label",
+      source: "ugc",
+      isRejected: true,
+    })
+    const row = await resolvedRow("txn-tags-rejected")
+    expect(row?.tags).toEqual([])
   })
 
   test("tags: empty array, not null, when a transaction has none", async () => {

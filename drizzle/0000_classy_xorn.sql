@@ -3,8 +3,9 @@ CREATE TYPE "public"."account_type" AS ENUM('checking', 'savings', 'credit', 'in
 CREATE TYPE "public"."attribution" AS ENUM('ai', 'ugc');--> statement-breakpoint
 CREATE TYPE "public"."budget_class" AS ENUM('fixed', 'essential', 'discretionary', 'income', 'excluded');--> statement-breakpoint
 CREATE TYPE "public"."cadence" AS ENUM('weekly', 'monthly', 'quarterly', 'yearly');--> statement-breakpoint
-CREATE TYPE "public"."correction_field" AS ENUM('budget', 'category', 'description', 'amount', 'trip', 'tag', 'subscription');--> statement-breakpoint
+CREATE TYPE "public"."correction_field" AS ENUM('budget', 'category', 'description', 'amount', 'tag', 'subscription');--> statement-breakpoint
 CREATE TYPE "public"."sync_status" AS ENUM('running', 'ok', 'error');--> statement-breakpoint
+CREATE TYPE "public"."tag_kind" AS ENUM('label', 'trip', 'business');--> statement-breakpoint
 CREATE TABLE "accounts" (
 	"id" text PRIMARY KEY NOT NULL,
 	"raw_name" text NOT NULL,
@@ -93,21 +94,33 @@ CREATE TABLE "sync_runs" (
 --> statement-breakpoint
 CREATE TABLE "tags" (
 	"id" text PRIMARY KEY NOT NULL,
+	"parent_id" text,
+	"kind" "tag_kind" DEFAULT 'label' NOT NULL,
 	"name" text NOT NULL,
 	"description" text,
 	"color" text,
+	"start_date" date,
+	"end_date" date,
 	"is_archived" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "tags_name_unique" UNIQUE("name")
+	"depth" integer GENERATED ALWAYS AS (case when parent_id is null then 0 else 1 end) STORED,
+	"parent_depth" integer GENERATED ALWAYS AS (case when parent_id is null then null else 0 end) STORED,
+	CONSTRAINT "uq_tags_id_depth" UNIQUE("id","depth"),
+	CONSTRAINT "uq_tags_id_kind" UNIQUE("id","kind"),
+	CONSTRAINT "trip_has_window" CHECK ((kind = 'trip') = (start_date is not null)),
+	CONSTRAINT "window_ordered" CHECK (end_date is null or end_date >= start_date)
 );
 --> statement-breakpoint
 CREATE TABLE "transaction_tags" (
 	"transaction_id" text NOT NULL,
 	"tag_id" text NOT NULL,
+	"kind" "tag_kind" NOT NULL,
 	"source" "attribution" NOT NULL,
+	"is_rejected" boolean DEFAULT false NOT NULL,
 	"ai_confidence" real,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "transaction_tags_transaction_id_tag_id_pk" PRIMARY KEY("transaction_id","tag_id")
+	CONSTRAINT "transaction_tags_transaction_id_tag_id_pk" PRIMARY KEY("transaction_id","tag_id"),
+	CONSTRAINT "rejected_is_ugc" CHECK (not is_rejected or source = 'ugc')
 );
 --> statement-breakpoint
 CREATE TABLE "transactions" (
@@ -123,7 +136,6 @@ CREATE TABLE "transactions" (
 	"raw_check_number" text,
 	"raw_imported_at" date,
 	"ai_budget_id" text,
-	"ai_trip_id" text,
 	"ai_subscription_id" text,
 	"ai_category_detailed" text,
 	"ai_confidence" real,
@@ -134,7 +146,6 @@ CREATE TABLE "transactions" (
 	"ugc_description" text,
 	"ugc_category_detailed" text,
 	"ugc_budget_id" text,
-	"ugc_trip_id" text,
 	"ugc_subscription_id" text,
 	"ugc_note" text,
 	"ugc_is_hidden" boolean DEFAULT false NOT NULL,
@@ -145,41 +156,35 @@ CREATE TABLE "transactions" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "trips" (
-	"id" text PRIMARY KEY NOT NULL,
-	"name" text NOT NULL,
-	"start_date" date NOT NULL,
-	"end_date" date NOT NULL,
-	"description" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
-);
---> statement-breakpoint
 ALTER TABLE "corrections" ADD CONSTRAINT "corrections_transaction_id_transactions_id_fk" FOREIGN KEY ("transaction_id") REFERENCES "public"."transactions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_budget_id_budgets_id_fk" FOREIGN KEY ("budget_id") REFERENCES "public"."budgets"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "tags" ADD CONSTRAINT "tags_parent_id_tags_id_fk" FOREIGN KEY ("parent_id") REFERENCES "public"."tags"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "tags" ADD CONSTRAINT "tags_parent_id_parent_depth_tags_id_depth_fk" FOREIGN KEY ("parent_id","parent_depth") REFERENCES "public"."tags"("id","depth") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "tags" ADD CONSTRAINT "tags_parent_id_kind_tags_id_kind_fk" FOREIGN KEY ("parent_id","kind") REFERENCES "public"."tags"("id","kind") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transaction_tags" ADD CONSTRAINT "transaction_tags_transaction_id_transactions_id_fk" FOREIGN KEY ("transaction_id") REFERENCES "public"."transactions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transaction_tags" ADD CONSTRAINT "transaction_tags_tag_id_tags_id_fk" FOREIGN KEY ("tag_id") REFERENCES "public"."tags"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "transaction_tags" ADD CONSTRAINT "transaction_tags_tag_id_kind_tags_id_kind_fk" FOREIGN KEY ("tag_id","kind") REFERENCES "public"."tags"("id","kind") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_account_id_accounts_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."accounts"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_ai_budget_id_budgets_id_fk" FOREIGN KEY ("ai_budget_id") REFERENCES "public"."budgets"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "transactions" ADD CONSTRAINT "transactions_ai_trip_id_trips_id_fk" FOREIGN KEY ("ai_trip_id") REFERENCES "public"."trips"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_ai_subscription_id_subscriptions_id_fk" FOREIGN KEY ("ai_subscription_id") REFERENCES "public"."subscriptions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_ai_category_detailed_categories_detailed_fk" FOREIGN KEY ("ai_category_detailed") REFERENCES "public"."categories"("detailed") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_ugc_category_detailed_categories_detailed_fk" FOREIGN KEY ("ugc_category_detailed") REFERENCES "public"."categories"("detailed") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_ugc_budget_id_budgets_id_fk" FOREIGN KEY ("ugc_budget_id") REFERENCES "public"."budgets"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "transactions" ADD CONSTRAINT "transactions_ugc_trip_id_trips_id_fk" FOREIGN KEY ("ugc_trip_id") REFERENCES "public"."trips"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "transactions" ADD CONSTRAINT "transactions_ugc_subscription_id_subscriptions_id_fk" FOREIGN KEY ("ugc_subscription_id") REFERENCES "public"."subscriptions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "idx_categories_primary" ON "categories" USING btree ("primary");--> statement-breakpoint
 CREATE INDEX "idx_categories_pfcv1" ON "categories" USING gin ("pfcv1_detailed");--> statement-breakpoint
 CREATE INDEX "idx_corr_txn" ON "corrections" USING btree ("transaction_id");--> statement-breakpoint
 CREATE INDEX "idx_corr_recent" ON "corrections" USING btree ("created_at");--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_tags_sibling_name" ON "tags" USING btree (coalesce(parent_id, ''),"name");--> statement-breakpoint
+CREATE INDEX "idx_tags_parent" ON "tags" USING btree ("parent_id");--> statement-breakpoint
+CREATE INDEX "idx_tags_trip_range" ON "tags" USING btree ("start_date","end_date") WHERE kind = 'trip';--> statement-breakpoint
 CREATE INDEX "idx_txn_tags_tag" ON "transaction_tags" USING btree ("tag_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_txn_one_exclusive_kind" ON "transaction_tags" USING btree ("transaction_id","kind") WHERE kind <> 'label' and not is_rejected;--> statement-breakpoint
 CREATE INDEX "idx_txn_date" ON "transactions" USING btree ("raw_date");--> statement-breakpoint
 CREATE INDEX "idx_txn_account" ON "transactions" USING btree ("account_id");--> statement-breakpoint
 CREATE INDEX "idx_txn_merchant" ON "transactions" USING btree ("raw_merchant_name");--> statement-breakpoint
 CREATE INDEX "idx_txn_budget" ON "transactions" USING btree ("ugc_budget_id","ai_budget_id");--> statement-breakpoint
-CREATE INDEX "idx_txn_trip" ON "transactions" USING btree ("ugc_trip_id","ai_trip_id");--> statement-breakpoint
 CREATE INDEX "idx_txn_unclassified" ON "transactions" USING btree ("raw_date") WHERE ai_budget_id is null and ugc_budget_id is null;--> statement-breakpoint
-CREATE INDEX "idx_trips_range" ON "trips" USING btree ("start_date","end_date");--> statement-breakpoint
 CREATE VIEW "public"."resolved_transactions" AS (
   select
     transaction.id,
@@ -197,7 +202,21 @@ CREATE VIEW "public"."resolved_transactions" AS (
       transaction.raw_category_detailed
     ) as category_detailed,
     coalesce(transaction.ugc_budget_id, transaction.ai_budget_id) as budget_id,
-    coalesce(transaction.ugc_trip_id, transaction.ai_trip_id) as trip_id,
+    (
+      select transaction_tag.tag_id
+      from transaction_tags transaction_tag
+      where transaction_tag.transaction_id = transaction.id
+        and transaction_tag.kind = 'trip'
+        and not transaction_tag.is_rejected
+    ) as trip_id,
+    (
+      select coalesce(tag.parent_id, tag.id)
+      from transaction_tags transaction_tag
+      join tags tag on tag.id = transaction_tag.tag_id
+      where transaction_tag.transaction_id = transaction.id
+        and transaction_tag.kind = 'business'
+        and not transaction_tag.is_rejected
+    ) as business_id,
     coalesce(transaction.ugc_subscription_id, transaction.ai_subscription_id) as subscription_id,
     (transaction.ugc_budget_id is not null) as budget_is_confirmed,
     transaction.direction,
@@ -212,11 +231,23 @@ CREATE VIEW "public"."resolved_transactions" AS (
     coalesce(
       (
         select jsonb_agg(
-          jsonb_build_object('id', tag.id, 'name', tag.name, 'source', transaction_tag.source)
+          jsonb_build_object(
+            'id', tag.id,
+            'name', tag.name,
+            'parentId', tag.parent_id,
+            'kind', tag.kind,
+            'path', case
+              when parent.id is null then tag.name
+              else parent.name || ' / ' || tag.name
+            end,
+            'source', transaction_tag.source
+          )
         )
         from transaction_tags transaction_tag
         join tags tag on tag.id = transaction_tag.tag_id
+        left join tags parent on parent.id = tag.parent_id
         where transaction_tag.transaction_id = transaction.id
+          and not transaction_tag.is_rejected
       ),
       '[]'::jsonb
     ) as tags

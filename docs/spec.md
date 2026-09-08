@@ -82,14 +82,13 @@ Same semantics, same precedence.
 | `transactions` | core; raw / ai / ugc columns side by side |
 | `categories` | Plaid PFC v2 seed, ~127 rows |
 | `budgets` | spend buckets, `class` drives the widget |
-| `trips` | date-bounded travel windows |
-| `tags` | free-form labels — divorce, cat, work |
-| `transaction_tags` | many-to-many join, `source`-stamped |
+| `tags` | labels, trips, and businesses — `kind` discriminates; optional one level of nesting |
+| `transaction_tags` | many-to-many join, `source`-stamped, carries rejections |
 | `subscriptions` | recurring merchant + expected amount |
 | `corrections` | append-only log of every ai → ugc override |
 | `sync_runs` | freshness signal + debuggability |
 | `app_state` | KV: distilled classification guide |
-| `v_transactions` | view resolving the three-way COALESCE |
+| `resolved_transactions` | view resolving the three-way COALESCE |
 
 `corrections` is the one that's easy to skip and shouldn't be. `ugc_budget_id` tells you the *current*
 state; it doesn't tell you that on Aug 12 you moved Safeway out of Groceries into a trip because you were
@@ -105,7 +104,9 @@ This keeps the schema correct on the day you cut over to real Plaid.
 
 ```ts
 import { pgTable, pgEnum, text, date, numeric, boolean, integer, real,
-         timestamp, jsonb, index, primaryKey } from "drizzle-orm/pg-core"
+         timestamp, jsonb, index, primaryKey, check, foreignKey, unique,
+         uniqueIndex } from "drizzle-orm/pg-core"
+import type { AnyPgColumn } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 export const accountType = pgEnum("account_type",
@@ -117,8 +118,9 @@ export const cadence = pgEnum("cadence",
   ["weekly", "monthly", "quarterly", "yearly"])
 export const attribution = pgEnum("attribution", ["ai", "ugc"])
 export const correctionField = pgEnum("correction_field",
-  ["budget", "category", "description", "amount", "trip", "tag", "subscription"])
+  ["budget", "category", "description", "amount", "tag", "subscription"])
 export const syncStatus = pgEnum("sync_status", ["running", "ok", "error"])
+export const tagKind = pgEnum("tag_kind", ["label", "trip", "business"])
 
 // ── accounts ────────────────────────────────────────────────────────────
 export const accounts = pgTable("accounts", {
@@ -163,42 +165,78 @@ export const budgets = pgTable("budgets", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 })
 
-// ── trips ───────────────────────────────────────────────────────────────
-// A date window is a *candidate* filter, not an assignment: the mortgage that
-// autopays mid-trip is not trip spend. Claude decides inside the window.
-export const trips = pgTable("trips", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),                       // "AU/NZ Trip"
-  startDate: date("start_date").notNull(),
-  endDate: date("end_date").notNull(),
-  // Optional hints for Claude: destinations, who came, what counts.
-  description: text("description"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => [index("idx_trips_range").on(t.startDate, t.endDate)])
-
 // ── tags ────────────────────────────────────────────────────────────────
+// A trip is a tag with a date window; a business is a tag with children -
+// unified rather than kept as separate tables (SDG-209). A date window is a
+// *candidate* filter, not an assignment: the mortgage that autopays mid-trip
+// is not trip spend. Claude decides inside the window, and
+// transaction_tags.isRejected is what lets it say "no" and have that stick.
 export const tags = pgTable("tags", {
   id: text("id").primaryKey(),
-  name: text("name").notNull().unique(),              // "divorce", "cat"
+  parentId: text("parent_id").references((): AnyPgColumn => tags.id, { onDelete: "restrict" }),
+  kind: tagKind("kind").default("label").notNull(),
+  name: text("name").notNull(),                       // "food", not "cat / food"
   // Natural-language rule, same job as budgets.description.
   // "Anything for Pixel — vet, food, litter, boarding."
   description: text("description"),
   color: text("color"),
+
+  startDate: date("start_date"),                      // trip-only, null for every other kind
+  endDate: date("end_date"),
+
   isArchived: boolean("is_archived").default(false).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-})
+
+  // Caps nesting at two levels declaratively: a child is depth 1 and its
+  // parentDepth is 0, so the composite FK below can only ever resolve to a
+  // root. No trigger, no app-level check.
+  depth: integer("depth").generatedAlwaysAs(
+    sql`case when parent_id is null then 0 else 1 end`),
+  parentDepth: integer("parent_depth").generatedAlwaysAs(
+    sql`case when parent_id is null then null else 0 end`),
+}, (t) => [
+  // Postgres permits FKs onto generated columns except with set null/set
+  // default actions, hence restrict on parentId above - deleting `cat` out
+  // from under `cat -> food` should fail loudly rather than silently orphan.
+  foreignKey({ columns: [t.parentId, t.parentDepth], foreignColumns: [t.id, t.depth] }),
+  // Makes a child inherit its parent's kind - without this a `label` could
+  // hang off a `business` root and quietly escape the /standing exclusion.
+  foreignKey({ columns: [t.parentId, t.kind], foreignColumns: [t.id, t.kind] }),
+  unique("uq_tags_id_depth").on(t.id, t.depth),
+  unique("uq_tags_id_kind").on(t.id, t.kind),
+  // Wrapped in coalesce because Postgres treats NULLs as distinct in unique
+  // indexes and would otherwise permit two root tags named "cat". "food"
+  // under `cat` and "food" under `groceries` are different tags.
+  uniqueIndex("uq_tags_sibling_name").on(sql`coalesce(parent_id, '')`, t.name),
+  index("idx_tags_parent").on(t.parentId),
+  index("idx_tags_trip_range").on(t.startDate, t.endDate).where(sql`kind = 'trip'`),
+  check("trip_has_window", sql`(kind = 'trip') = (start_date is not null)`),
+  check("window_ordered", sql`end_date is null or end_date >= start_date`),
+])
 
 export const transactionTags = pgTable("transaction_tags", {
   transactionId: text("transaction_id").notNull()
     .references(() => transactions.id, { onDelete: "cascade" }),
   tagId: text("tag_id").notNull().references(() => tags.id, { onDelete: "cascade" }),
+  kind: tagKind("kind").notNull(),                    // denormalized; held honest by the composite FK below
   source: attribution("source").notNull(),
+  // Tombstone for a trip/business Claude guessed and you rejected. Only a
+  // ugc row may be rejected - Claude doesn't get to tombstone its own
+  // suggestions, it just doesn't re-emit them.
+  isRejected: boolean("is_rejected").default(false).notNull(),
   aiConfidence: real("ai_confidence"),                // null when source = 'ugc'
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => [
   primaryKey({ columns: [t.transactionId, t.tagId] }),
+  foreignKey({ columns: [t.tagId, t.kind], foreignColumns: [tags.id, tags.kind] }).onDelete("cascade"),
   index("idx_txn_tags_tag").on(t.tagId),
+  // Keyed on (transactionId, kind) rather than one index per kind, so a
+  // business trip is expressible (one trip row plus one business row) while
+  // two businesses on one transaction is not - "label is the only
+  // multi-valued kind", which absorbs a future kind without another index.
+  uniqueIndex("uq_txn_one_exclusive_kind").on(t.transactionId, t.kind)
+    .where(sql`kind <> 'label' and not is_rejected`),
+  check("rejected_is_ugc", sql`not is_rejected or source = 'ugc'`),
 ])
 
 // ── subscriptions ───────────────────────────────────────────────────────
@@ -243,7 +281,6 @@ export const transactions = pgTable("transactions", {
 
   // ---- ai: written by /classify, never by /sync ----
   aiBudgetId: text("ai_budget_id").references(() => budgets.id, { onDelete: "set null" }),
-  aiTripId: text("ai_trip_id").references(() => trips.id, { onDelete: "set null" }),
   aiSubscriptionId: text("ai_subscription_id")
     .references(() => subscriptions.id, { onDelete: "set null" }),
   aiCategoryDetailed: text("ai_category_detailed").references(() => categories.detailed),
@@ -258,7 +295,6 @@ export const transactions = pgTable("transactions", {
   ugcDescription: text("ugc_description"),
   ugcCategoryDetailed: text("ugc_category_detailed").references(() => categories.detailed),
   ugcBudgetId: text("ugc_budget_id").references(() => budgets.id, { onDelete: "set null" }),
-  ugcTripId: text("ugc_trip_id").references(() => trips.id, { onDelete: "set null" }),
   ugcSubscriptionId: text("ugc_subscription_id")
     .references(() => subscriptions.id, { onDelete: "set null" }),
   ugcNote: text("ugc_note"),
@@ -278,7 +314,6 @@ export const transactions = pgTable("transactions", {
   index("idx_txn_account").on(t.accountId),
   index("idx_txn_merchant").on(t.rawMerchantName),
   index("idx_txn_budget").on(t.ugcBudgetId, t.aiBudgetId),
-  index("idx_txn_trip").on(t.ugcTripId, t.aiTripId),
   index("idx_txn_unclassified").on(t.rawDate)
     .where(sql`ai_budget_id is null and ugc_budget_id is null`),
 ])
@@ -328,6 +363,20 @@ export const appState = pgTable("app_state", {
 })
 ```
 
+**ADR — business exclusion lives in tags, not budgets.** Business spend must not reach the widget's
+discretionary figure. The obvious lever is a budget with `class = 'excluded'`, but that puts the business
+concept in two places and they drift the first time you tag something and forget the budget. Instead:
+`GET /standing` excludes any transaction carrying a non-rejected `kind = 'business'` tag regardless of
+budget, and business transactions keep an ordinary budget so the business tab gets a spend breakdown for
+free. Cost is that `/standing` grows a dependency on `transaction_tags`, which it doesn't have today.
+Recorded here so the standing-route ticket doesn't relitigate it.
+
+**ADR — no tax mapping in the schema.** A business's children are ordinary tags you create and name
+yourself, the same as any other tag. The schema carries no `tax_line` column and no canonical form-line
+list: tax categories change between filing years and between entity types, and baking one revision's line
+set into a constraint makes every future correction a migration. Any mapping from a business's children to
+tax-form lines is a concern of whatever produces the report, not of the rows.
+
 ### View
 
 Every read path goes through this. No route hand-rolls the COALESCE. Named for what it does, not what it
@@ -344,16 +393,33 @@ select
   coalesce(transaction.ugc_category_detailed, transaction.ai_category_detailed,
            transaction.raw_category_detailed)                              as category_detailed,
   coalesce(transaction.ugc_budget_id, transaction.ai_budget_id)            as budget_id,
-  coalesce(transaction.ugc_trip_id, transaction.ai_trip_id)                as trip_id,
+  (
+    select transaction_tag.tag_id
+    from transaction_tags transaction_tag
+    where transaction_tag.transaction_id = transaction.id
+      and transaction_tag.kind = 'trip' and not transaction_tag.is_rejected
+  )                                                                        as trip_id,
+  (
+    select coalesce(tag.parent_id, tag.id)
+    from transaction_tags transaction_tag join tags tag on tag.id = transaction_tag.tag_id
+    where transaction_tag.transaction_id = transaction.id
+      and transaction_tag.kind = 'business' and not transaction_tag.is_rejected
+  )                                                                        as business_id,
   coalesce(transaction.ugc_subscription_id, transaction.ai_subscription_id) as subscription_id,
   (transaction.ugc_budget_id is not null)                                  as budget_is_confirmed,
   transaction.direction, transaction.ugc_note, transaction.ugc_is_hidden,
   transaction.raw_amount, transaction.raw_description, transaction.raw_merchant_name,
   transaction.raw_category_detailed, transaction.ai_confidence, transaction.ai_reasoning,
   coalesce((
-    select jsonb_agg(jsonb_build_object('id', tag.id, 'name', tag.name, 'source', transaction_tag.source))
-    from transaction_tags transaction_tag join tags tag on tag.id = transaction_tag.tag_id
-    where transaction_tag.transaction_id = transaction.id
+    select jsonb_agg(jsonb_build_object(
+      'id', tag.id, 'name', tag.name, 'parentId', tag.parent_id, 'kind', tag.kind,
+      'path', case when parent.id is null then tag.name else parent.name || ' / ' || tag.name end,
+      'source', transaction_tag.source
+    ))
+    from transaction_tags transaction_tag
+    join tags tag on tag.id = transaction_tag.tag_id
+    left join tags parent on parent.id = tag.parent_id
+    where transaction_tag.transaction_id = transaction.id and not transaction_tag.is_rejected
   ), '[]'::jsonb)                                                          as tags
 from transactions transaction;
 ```
@@ -410,8 +476,8 @@ up in practice, widen the default to `date_trunc('month', now()) - interval '7 d
 | `GET /accounts` | `?includeHidden=true` |
 | `GET /transactions` | `?from&to&accountId&budgetId&tripId&tagId&subscriptionId&unassigned&q&limit=50&cursor` — keyset on `(date desc, id desc)` |
 | `GET /transactions/:id` | includes `corrections[]` and `tags[]` |
-| `GET /budgets` · `GET /trips` · `GET /tags` · `GET /subscriptions` | `?includeArchived` / `?includeInactive` |
-| `GET /trips/:id` | plus rollup: total spend, by budget, by day |
+| `GET /budgets` · `GET /tags` · `GET /subscriptions` | `?includeArchived` / `?includeInactive`; `/tags` also takes `?kind` and returns `parentId` on every row |
+| `GET /tags/:id` | plus rollup: total spend, by budget, by day — applies to any tag, not just trips; for a business root it's most of what a tax report needs |
 | `GET /subscriptions` | plus `lastChargedAt`, `lastAmount`, `monthlyEquivalent`, `amountDrift` |
 | `GET /categories` | Plaid PFC v2, grouped by primary |
 | `GET /standing?month=2026-08` | **the widget endpoint** |
@@ -437,16 +503,24 @@ up in practice, widen the default to `date_trunc('month', now()) - interval '7 d
 ### Write
 
 **`PATCH /transactions/:id`** — accepts `ugcAmount`, `ugcDescription`, `ugcCategoryDetailed`,
-`ugcBudgetId`, `ugcTripId`, `ugcSubscriptionId`, `ugcNote`, `ugcIsHidden`, `tagIds[]`, `reason`.
+`ugcBudgetId`, `ugcSubscriptionId`, `ugcNote`, `ugcIsHidden`, `tagIds[]`, `reason`. Trips arrive through
+`tagIds[]` like everything else — there's no `ugcTripId`.
 
 Writing any `ugc*` field **also appends a `corrections` row in the same DB transaction**, diffed against
 the current effective value. That coupling lives in the handler so the log can't drift. `null` clears the
 override and logs the reversal. `tagIds` replaces the `source = 'ugc'` set and logs adds and removes
-separately; AI-sourced tag rows are promoted to `ugc` when you keep them and deleted when you don't.
+separately; AI-sourced label rows are promoted to `ugc` when you keep them and deleted when you don't.
+Removing a trip or business tag the model assigned writes a rejection row instead of deleting — the
+tombstone in `transaction_tags.isRejected` is what stops the next `/classify` run from re-adding it.
+Corrections log `field = 'tag'` in both cases with the tag id in `from_value`.
 
-**`POST` / `PATCH` / `DELETE`** on `/budgets`, `/trips`, `/tags`, `/subscriptions`.
-Deleting a budget 409s if `isSystem`, otherwise reassigns orphans to the system budget.
-Deleting a trip or subscription nulls the FKs; deleting a tag cascades the join rows.
+**`POST` / `PATCH` / `DELETE`** on `/budgets`, `/tags`, `/subscriptions`. Deleting a budget 409s if
+`isSystem`, otherwise reassigns orphans to the system budget. Deleting a subscription nulls the FKs.
+
+Under `/tags`: `POST` accepts `parentId`, `kind`, `startDate`, `endDate`. A `parentId` pointing at a row
+that already has a parent 422s rather than surfacing a raw FK violation; a `parentId` whose `kind` differs
+from the new row's `kind` 422s likewise. `DELETE` on a tag with children 409s; on a childless tag it
+cascades the join rows.
 
 ### Classification
 
@@ -458,25 +532,33 @@ Run the deterministic pre-filter first and skip the API call entirely when it hi
 
 1. **Subscription match** — `raw_merchant_name` matches `merchantPattern` and `|amount − expectedAmount| ≤ tolerance` → assign `ai_subscription_id` and the subscription's `budgetId`, confidence `1.0`. Outside tolerance: still link, flag drift, but send to Claude for the budget.
 2. **Merchant precedent** — the same `raw_merchant_name` already has a `ugc_budget_id` → copy it.
-3. **Trip window** — outside every trip's date range, `ai_trip_id` is null without asking.
+3. **Trip window** — outside every `tags where kind = 'trip'` date range, no trip tag is assigned without asking. Boundary is inclusive: a transaction dated exactly on `endDate` is in.
 
-Everything else batches to Claude (Haiku, 10/batch) with this payload:
+Everything else batches to Claude (Haiku, 10/batch) with this payload. `trips` and `businesses` stay
+separate top-level keys even though they're one table underneath — handing the model a flat tag list and
+expecting it to infer that some entries have date semantics and others don't is a strictly worse prompt.
+`businesses` entries carry their children inline; `tags` entries carry `parentId` and the resolved path.
+Rejection rows feed in alongside `corrections` as negative examples — the highest-signal thing available
+for the two classifications the model gets wrong most often:
 
 ```jsonc
 {
   "budgets":       [{ "id", "name", "class", "description", "linkedCategories" }],
   "trips":         [{ "id", "name", "startDate", "endDate", "description" }],  // overlapping only
-  "tags":          [{ "id", "name", "description" }],
+  "businesses":    [{ "id", "name", "description", "children": [{ "id", "name" }] }],
+  "tags":          [{ "id", "name", "parentId", "path", "description" }],
   "subscriptions": [{ "id", "name", "merchantPattern", "expectedAmount", "cadence" }],
   "guide":         "…app_state.classification_guide…",
   "corrections":   [{ "merchant", "description", "amount", "category",
                       "field", "from", "to", "reason" }],
+  "rejections":    [{ "merchant", "description", "kind", "tagName", "reason" }],
   "batch":         [{ "id", "description", "merchantName", "amount", "date",
                       "categoryDetailed", "accountName" }]
 }
 ```
 
-Returns per transaction: `budgetId`, `tripId | null`, `tagIds[]`, `subscriptionId | null`,
+Returns per transaction: `budgetId`, `tagIds[]` (trip and business assignments included, not split out —
+`transaction_tags.kind` on the write side is what makes them exclusive), `subscriptionId | null`,
 `categoryDetailed`, `confidence`, `reasoning` (one line). Use the native `output_config` / `json_schema`
 structured output, not a prefill.
 
@@ -542,7 +624,7 @@ src/
     client.ts, schema.ts, testing.ts   # Neon client, tables/enums/view, PGlite test harness
     seeds/{index,categories,system-budget}.ts
     seeds/pfc-taxonomy-all.csv         # committed, source of the category seed
-  routes/{sync,transactions,budgets,trips,tags,subscriptions,accounts,standing,classify}.ts
+  routes/{sync,transactions,budgets,tags,subscriptions,accounts,standing,classify}.ts
   lib/{sheets,tiller-map,amounts,standing,prefilter,claude,csv,pfc}.ts   # pure fns — the test surface
 bruno/                # collection, committed
 ```
@@ -556,6 +638,13 @@ no reason to add Vitest when the runtime ships a runner. Point it at `lib/`, whe
 - **the upsert guard** — a second `/sync` with changed raw data leaves every `ai_*` and `ugc_*` column byte-identical
 - `prefilter`: subscription inside/outside tolerance, merchant precedent, trip-window boundaries (a transaction dated exactly on `endDate` is in)
 - `standing`: day 1 (zero denominator), no target set, over budget
+- **tags hierarchy** — two-level nesting inserts, three-level fails; a child whose `kind` differs from its
+  parent fails; duplicate sibling names rejected, the same name under different parents accepted; two root
+  tags with the same name rejected; `kind = 'trip'` without a window rejected, a `label` with one also
+  rejected; deleting a parent with children fails, deleting a childless tag cascades its join rows
+- **transaction_tags exclusivity** — a second trip on one transaction rejected, a second business
+  rejected, one of each plus any number of labels accepted; a rejected row doesn't count toward the limit;
+  `is_rejected` with `source = 'ai'` rejected
 
 Integration tests run against a Neon branch, torn down per run.
 
@@ -587,3 +676,13 @@ a real split needs a child table) · AI-proposed subscriptions and trips from re
 `source` column on both is already there for it) · what happens to Tiller-sourced rows at Plaid cutover —
 the `source` column keeps the question answerable · the WidgetKit client, which consumes `GET /standing`
 and nothing else.
+
+**Tag hierarchy (SDG-209):** arbitrary-depth nesting — drop `depth`/`parentDepth` and swap descendant
+lookups to a recursive CTE if two levels stop being enough · nested trips, technically expressible through
+the hierarchy but forbidden by `uq_txn_one_exclusive_kind`, which is the intended reading of "a conference
+inside a longer trip" for now · `accounts.ugcDefaultTagId` — a dedicated business card is the strongest
+possible business prefilter, assignable at confidence 1.0 with no API call, the same shape as subscription
+matching · business header fields for an actual filing (NAICS activity code, EIN, accounting method, start
+date), which belong on the root tag but nothing reads yet · manual-entry paths for the lines no
+transaction can produce — mileage, depreciation, home office, payroll — a business tab built on
+transactions alone cannot produce a complete filing, by construction, not by omission.

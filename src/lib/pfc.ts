@@ -7,21 +7,20 @@
 // raw_category_detailed. Most v1 codes equal their v2 counterpart byte-for-byte;
 // a handful drift (INCOME_WAGES -> INCOME_SALARY, etc.), and one v2 code
 // (OTHER_OTHER) has two v1 aliases packed into one CSV cell, separated by " / ".
+//
+// Plaid's own description column is prose ("Purchases at coffee shops or
+// cafes"), not a display name, and this app never renders it - display names
+// come from the curated lib/category-names.ts map instead.
 
+import { DETAILED_NAMES, PRIMARY_NAMES } from "./category-names"
 import { parseCsv } from "./csv"
 
 export interface PfcCategory {
   primary: string
   detailed: string
-  description: string | null
+  name: string
+  primaryName: string
   pfcv1Detailed: string[]
-  iconUrl: string
-}
-
-const ICON_BASE = "https://plaid-category-icons.plaid.com"
-
-function iconUrl(primary: string): string {
-  return `${ICON_BASE}/PFC_${primary}.png`
 }
 
 export function parsePfcTaxonomy(csvText: string): PfcCategory[] {
@@ -32,15 +31,20 @@ export function parsePfcTaxonomy(csvText: string): PfcCategory[] {
   const dataRows = rows.slice(1).filter((row) => row[0] && row[1])
 
   return dataRows.map((row) => {
-    const [primary, detailed, description, , pfcv1Cell] = row
+    const [primary, detailed, , , pfcv1Cell] = row
     if (!primary || !detailed) throw new Error("PFC row missing primary or detailed code")
+
+    const name = DETAILED_NAMES[detailed]
+    const primaryName = PRIMARY_NAMES[primary]
+    if (!name) throw new Error(`No curated name for detailed code "${detailed}"`)
+    if (!primaryName) throw new Error(`No curated name for primary code "${primary}"`)
 
     return {
       primary,
       detailed,
-      description: description ? description : null,
+      name,
+      primaryName,
       pfcv1Detailed: pfcv1Cell ? pfcv1Cell.split(" / ").map((code) => code.trim()) : [],
-      iconUrl: iconUrl(primary),
     }
   })
 }

@@ -25,9 +25,9 @@ describe("parsePfcTaxonomy", () => {
     }
   })
 
-  test("derives the icon URL from the primary code", () => {
-    const category = categories.find((entry) => entry.detailed === "FOOD_AND_DRINK_GROCERIES")
-    expect(category?.iconUrl).toBe("https://plaid-category-icons.plaid.com/PFC_FOOD_AND_DRINK.png")
+  test("looks up curated display names", () => {
+    const category = categories.find((entry) => entry.detailed === "FOOD_AND_DRINK_COFFEE")
+    expect(category).toMatchObject({ name: "Coffee Shops", primaryName: "Food & Drink" })
   })
 
   test("maps the three unambiguous PFC v1 codes that drift from their v2 name", () => {

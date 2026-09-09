@@ -1,8 +1,11 @@
-// Verbatim from spec §4, with three deliberate deviations, each called out at
+// Verbatim from spec §4, with four deliberate deviations, each called out at
 // its definition below:
 //   1. categories.pfcv1Detailed - not in the spec at all. See its comment.
-//   2. transactions.direction - explicit ::text cast on the generated expression.
-//   3. index-callback parameters and SQL aliases spelled out in full, per
+//   2. categories.name / primaryName replace the spec's description / iconUrl -
+//      Plaid's prose description and icon URL are display data this app never
+//      renders; curated display names are. See lib/category-names.ts.
+//   3. transactions.direction - explicit ::text cast on the generated expression.
+//   4. index-callback parameters and SQL aliases spelled out in full, per
 //      CLAUDE.md's naming convention (the spec itself uses `t`, `tt`, `tg`).
 
 import { sql } from "drizzle-orm"
@@ -78,8 +81,8 @@ export const categories = pgTable(
   {
     detailed: text("detailed").primaryKey(), // FOOD_AND_DRINK_GROCERIES
     primary: text("primary").notNull(), // FOOD_AND_DRINK
-    description: text("description"),
-    iconUrl: text("icon_url"),
+    name: text("name").notNull(), // Groceries - curated, not Plaid's
+    primaryName: text("primary_name").notNull(), // Food & Drink - curated, not Plaid's
     // Not in spec §4. Tiller's Plaid integration emits PFC v1, not v2 - see
     // CLAUDE.md's gotcha. Most v1 codes equal their v2 name; a few drift, and
     // OTHER_OTHER has two v1 aliases, so this is an array, not a scalar.

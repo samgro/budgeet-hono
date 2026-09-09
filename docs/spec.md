@@ -142,8 +142,8 @@ export const accounts = pgTable("accounts", {
 export const categories = pgTable("categories", {
   detailed: text("detailed").primaryKey(),            // FOOD_AND_DRINK_GROCERIES
   primary: text("primary").notNull(),                 // FOOD_AND_DRINK
-  description: text("description"),
-  iconUrl: text("icon_url"),
+  name: text("name").notNull(),                       // Groceries - curated, not Plaid's
+  primaryName: text("primary_name").notNull(),        // Food & Drink - curated, not Plaid's
 }, (t) => [index("idx_categories_primary").on(t.primary)])
 
 // ── budgets ─────────────────────────────────────────────────────────────
@@ -479,7 +479,7 @@ up in practice, widen the default to `date_trunc('month', now()) - interval '7 d
 | `GET /budgets` · `GET /tags` · `GET /subscriptions` | `?includeArchived` / `?includeInactive`; `/tags` also takes `?kind` and returns `parentId` on every row |
 | `GET /tags/:id` | plus rollup: total spend, by budget, by day — applies to any tag, not just trips; for a business root it's most of what a tax report needs |
 | `GET /subscriptions` | plus `lastChargedAt`, `lastAmount`, `monthlyEquivalent`, `amountDrift` |
-| `GET /categories` | Plaid PFC v2, grouped by primary |
+| `GET /categories` | Plaid PFC v2, grouped by primary, curated `{ id, name }` display names at both levels |
 | `GET /standing?month=2026-08` | **the widget endpoint** |
 | `GET /health` | `{ ok, lastSyncAt, lastSyncStatus, unclassifiedCount }` |
 

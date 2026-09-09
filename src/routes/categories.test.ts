@@ -18,9 +18,9 @@ async function seededDatabase() {
   const testDatabase = await createTestDatabase()
   await testDatabase.insert(categories).values({
     detailed: "FOOD_AND_DRINK_COFFEE",
+    name: "Coffee Shops",
     primary: "FOOD_AND_DRINK",
-    description: "Coffee shops",
-    iconUrl: "https://plaid-category-icons.plaid.com/PFC_FOOD_AND_DRINK.png",
+    primaryName: "Food & Drink",
   })
   // PGlite genuinely satisfies the Database interface createCategoriesRoute
   // takes; it just isn't a pooled DatabaseClient, and /categories never
@@ -45,9 +45,8 @@ describe("GET /categories", () => {
     expect(await response.json()).toMatchObject({
       categories: [
         {
-          primary: "FOOD_AND_DRINK",
-          iconUrl: "https://plaid-category-icons.plaid.com/PFC_FOOD_AND_DRINK.png",
-          detailed: [{ detailed: "FOOD_AND_DRINK_COFFEE", description: "Coffee shops" }],
+          primary: { id: "FOOD_AND_DRINK", name: "Food & Drink" },
+          detailed: [{ id: "FOOD_AND_DRINK_COFFEE", name: "Coffee Shops" }],
         },
       ],
     })

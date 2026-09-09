@@ -69,7 +69,12 @@ describe("upsertTransactions - the raw-only invariant", () => {
       rawType: "checking",
       rawClass: "asset",
     })
-    await database.insert(categories).values({ detailed: "TEST_CATEGORY", primary: "TEST" })
+    await database.insert(categories).values({
+      detailed: "TEST_CATEGORY",
+      name: "Test Category",
+      primary: "TEST",
+      primaryName: "Test",
+    })
     await database
       .insert(budgets)
       .values({ id: "budget-1", name: "Budget", class: "discretionary" })
@@ -266,8 +271,20 @@ describe("upsertAccounts", () => {
 describe("loadCategoryAliases", () => {
   test("builds knownDetailed from every category and v1ToV2 only from actual aliases", async () => {
     await database.insert(categories).values([
-      { detailed: "INCOME_SALARY", primary: "INCOME", pfcv1Detailed: ["INCOME_WAGES"] },
-      { detailed: "FOOD_AND_DRINK_GROCERIES", primary: "FOOD_AND_DRINK", pfcv1Detailed: [] },
+      {
+        detailed: "INCOME_SALARY",
+        name: "Salary",
+        primary: "INCOME",
+        primaryName: "Income",
+        pfcv1Detailed: ["INCOME_WAGES"],
+      },
+      {
+        detailed: "FOOD_AND_DRINK_GROCERIES",
+        name: "Groceries",
+        primary: "FOOD_AND_DRINK",
+        primaryName: "Food & Drink",
+        pfcv1Detailed: [],
+      },
     ])
 
     const aliases = await loadCategoryAliases(database)
@@ -283,7 +300,9 @@ describe("loadCategoryAliases", () => {
   test("OTHER_OTHER's two v1 aliases both resolve to it", async () => {
     await database.insert(categories).values({
       detailed: "OTHER_OTHER",
+      name: "Other",
       primary: "OTHER",
+      primaryName: "Other",
       pfcv1Detailed: ["TRANSFER_IN_OTHER_TRANSFER_IN", "TRANSFER_OUT_OTHER_TRANSFER_OUT"],
     })
 

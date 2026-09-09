@@ -20,7 +20,41 @@ import {
   InvalidTransactionQueryError,
   listTransactions,
   parseTransactionQuery,
+  toCategoryDisplay,
 } from "./transactions"
+
+describe("toCategoryDisplay", () => {
+  test("both levels populated → nested primary and detailed", () => {
+    expect(
+      toCategoryDisplay({
+        categoryPrimaryId: "FOOD_AND_DRINK",
+        categoryPrimaryName: "Food & Drink",
+        categoryDetailedId: "FOOD_AND_DRINK_COFFEE",
+        categoryDetailedName: "Coffee Shops",
+      }),
+    ).toEqual({
+      primary: { id: "FOOD_AND_DRINK", name: "Food & Drink" },
+      detailed: { id: "FOOD_AND_DRINK_COFFEE", name: "Coffee Shops" },
+    })
+  })
+
+  // The leftJoin miss case: an unclassified transaction, or a
+  // raw_category_detailed the taxonomy doesn't know about (CLAUDE.md's no-FK
+  // gotcha). Drizzle's nested-object select() only supports one level of
+  // nesting, so the four columns are selected flat and reassembled here -
+  // this is what makes a miss collapse to null instead of shipping
+  // { primary: { id: null, ... }, detailed: { id: null, ... } }.
+  test("every column null (leftJoin miss) → null, not an object of nulls", () => {
+    expect(
+      toCategoryDisplay({
+        categoryPrimaryId: null,
+        categoryPrimaryName: null,
+        categoryDetailedId: null,
+        categoryDetailedName: null,
+      }),
+    ).toBeNull()
+  })
+})
 
 describe("parseTransactionQuery", () => {
   test("no params → defaults, every filter undefined", () => {
@@ -156,8 +190,9 @@ beforeAll(async () => {
   await database.insert(categories).values([
     {
       detailed: "FOOD_AND_DRINK_COFFEE",
+      name: "Coffee Shops",
       primary: "FOOD_AND_DRINK",
-      iconUrl: "https://example.test/coffee.png",
+      primaryName: "Food & Drink",
     },
   ])
 
@@ -252,10 +287,8 @@ describe("listTransactions / getTransaction", () => {
       )
     const detail = await getTransaction(database, "txn-seeded-category")
     expect(detail?.category).toEqual({
-      detailed: "FOOD_AND_DRINK_COFFEE",
-      primary: "FOOD_AND_DRINK",
-      description: null,
-      iconUrl: "https://example.test/coffee.png",
+      primary: { id: "FOOD_AND_DRINK", name: "Food & Drink" },
+      detailed: { id: "FOOD_AND_DRINK_COFFEE", name: "Coffee Shops" },
     })
   })
 

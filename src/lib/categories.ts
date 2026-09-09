@@ -7,19 +7,18 @@ import { categories } from "../db/schema"
 
 export interface CategoryRow {
   detailed: string
+  name: string
   primary: string
-  description: string | null
-  iconUrl: string | null
+  primaryName: string
 }
 
 export interface CategoryLeaf {
-  detailed: string
-  description: string | null
+  id: string
+  name: string
 }
 
 export interface CategoryGroup {
-  primary: string
-  iconUrl: string | null
+  primary: { id: string; name: string }
   detailed: CategoryLeaf[]
 }
 
@@ -32,16 +31,11 @@ export function groupByPrimary(rows: CategoryRow[]): CategoryGroup[] {
   let currentGroup: CategoryGroup | undefined
 
   for (const row of rows) {
-    if (currentGroup === undefined || currentGroup.primary !== row.primary) {
-      // iconUrl is derived once per primary (lib/pfc.ts), so every row in a
-      // group carries the same value - first-non-null is exact, and degrades
-      // sanely if a future row ever lands without one.
-      currentGroup = { primary: row.primary, iconUrl: row.iconUrl, detailed: [] }
+    if (currentGroup === undefined || currentGroup.primary.id !== row.primary) {
+      currentGroup = { primary: { id: row.primary, name: row.primaryName }, detailed: [] }
       groups.push(currentGroup)
-    } else if (currentGroup.iconUrl === null && row.iconUrl !== null) {
-      currentGroup.iconUrl = row.iconUrl
     }
-    currentGroup.detailed.push({ detailed: row.detailed, description: row.description })
+    currentGroup.detailed.push({ id: row.detailed, name: row.name })
   }
 
   return groups
@@ -51,12 +45,12 @@ export async function listCategories(database: Database) {
   const rows = await database
     .select({
       detailed: categories.detailed,
+      name: categories.name,
       // Drizzle's column reference quotes the identifier, sidestepping
       // `primary` being a Postgres keyword - the same trap
       // db/seeds/categories.ts had to quote around in raw SQL.
       primary: categories.primary,
-      description: categories.description,
-      iconUrl: categories.iconUrl,
+      primaryName: categories.primaryName,
     })
     .from(categories)
     .orderBy(categories.primary, categories.detailed)

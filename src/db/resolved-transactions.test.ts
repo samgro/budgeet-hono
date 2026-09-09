@@ -43,9 +43,9 @@ beforeAll(async () => {
   ])
 
   await database.insert(categories).values([
-    { detailed: "TEST_CATEGORY_RAW", primary: "TEST" },
-    { detailed: "TEST_CATEGORY_AI", primary: "TEST" },
-    { detailed: "TEST_CATEGORY_UGC", primary: "TEST" },
+    { detailed: "TEST_CATEGORY_RAW", name: "Raw", primary: "TEST", primaryName: "Test" },
+    { detailed: "TEST_CATEGORY_AI", name: "AI", primary: "TEST", primaryName: "Test" },
+    { detailed: "TEST_CATEGORY_UGC", name: "UGC", primary: "TEST", primaryName: "Test" },
   ])
 
   await database.insert(tags).values([

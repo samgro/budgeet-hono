@@ -117,6 +117,60 @@ function toCursor(row: { id: string | null; date: string | null }): Cursor {
   return { date: row.date, id: row.id }
 }
 
+export interface CategoryDisplay {
+  primary: { id: string; name: string }
+  detailed: { id: string; name: string }
+}
+
+interface RawCategoryColumns {
+  categoryPrimaryId: string | null
+  categoryPrimaryName: string | null
+  categoryDetailedId: string | null
+  categoryDetailedName: string | null
+}
+
+// categories is a leftJoin (an unclassified transaction, or one whose
+// raw_category_detailed isn't in the taxonomy - CLAUDE.md's no-FK gotcha - has
+// nothing to join to), so a miss comes back as every column null. Drizzle's
+// nested-object select() only supports one level of nesting (account, budget,
+// and subscription below all rely on that, including its whole-null-collapses
+// -to-null behavior for a leftJoin miss) - a two-level category { primary:
+// {...}, detailed: {...} } isn't valid there, so the four columns are
+// selected flat and reassembled into that shape here instead.
+export function toCategoryDisplay(raw: RawCategoryColumns): CategoryDisplay | null {
+  if (raw.categoryDetailedId === null || raw.categoryDetailedName === null) return null
+  // categories.primary and primary_name are NOT NULL, so a matched detailed
+  // row guarantees a non-null primary - these aren't independently nullable.
+  return {
+    primary: {
+      id: raw.categoryPrimaryId as string,
+      name: raw.categoryPrimaryName as string,
+    },
+    detailed: { id: raw.categoryDetailedId, name: raw.categoryDetailedName },
+  }
+}
+
+function withCategoryDisplay<TRow extends RawCategoryColumns>(
+  row: TRow,
+): Omit<TRow, keyof RawCategoryColumns> & { category: CategoryDisplay | null } {
+  const {
+    categoryPrimaryId,
+    categoryPrimaryName,
+    categoryDetailedId,
+    categoryDetailedName,
+    ...rest
+  } = row
+  return {
+    ...rest,
+    category: toCategoryDisplay({
+      categoryPrimaryId,
+      categoryPrimaryName,
+      categoryDetailedId,
+      categoryDetailedName,
+    }),
+  }
+}
+
 const transactionSummaryColumns = {
   id: resolvedTransactions.id,
   date: resolvedTransactions.date,
@@ -142,12 +196,10 @@ const transactionSummaryColumns = {
     color: budgets.color,
     emoji: budgets.emoji,
   },
-  category: {
-    detailed: categories.detailed,
-    primary: categories.primary,
-    description: categories.description,
-    iconUrl: categories.iconUrl,
-  },
+  categoryPrimaryId: categories.primary,
+  categoryPrimaryName: categories.primaryName,
+  categoryDetailedId: categories.detailed,
+  categoryDetailedName: categories.name,
   subscription: {
     id: subscriptions.id,
     name: subscriptions.name,
@@ -259,7 +311,7 @@ export async function listTransactions(database: Database, query: TransactionQue
   const lastRow = page.at(-1)
 
   return {
-    transactions: page,
+    transactions: page.map(withCategoryDisplay),
     nextCursor: hasNextPage && lastRow ? encodeCursor(toCursor(lastRow)) : null,
   }
 }
@@ -304,7 +356,7 @@ export async function getTransaction(database: Database, id: string) {
     .orderBy(desc(corrections.createdAt), desc(corrections.id))
 
   return {
-    ...row,
+    ...withCategoryDisplay(row),
     corrections: correctionRows.map((correction) => ({
       ...correction,
       createdAt: correction.createdAt.toISOString(),

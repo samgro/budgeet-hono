@@ -19,6 +19,8 @@ docs {
   limit=10 deliberately, so a real dataset actually produces a nextCursor -
   run this first to capture transactionsCursor and transactionId for
   "Transactions (next page)" and "Transaction by id" below. Each row is
-  directly renderable: account, budget, category, and subscription are
-  nested with display fields (name, color, emoji, iconUrl), not just ids.
+  directly renderable: account, budget, and subscription are nested with
+  display fields (name, color, emoji), not just ids. category is two nested
+  { id, name } levels - primary and detailed - or null if the transaction is
+  unclassified or carries a raw category the taxonomy doesn't know about.
 }

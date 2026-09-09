@@ -12,7 +12,9 @@ get {
 
 docs {
   The Plaid PFC v2 taxonomy (~127 codes), grouped by primary - 18 groups,
-  each carrying one iconUrl and a detailed[] array. pfcv1Detailed (the
-  sync-side v1→v2 mapping) never appears here; it's not display data. Static
-  seed data, no filters, no pagination.
+  each an { id, name } pair carrying a detailed[] array of { id, name }
+  leaves. pfcv1Detailed (the sync-side v1→v2 mapping) never appears here;
+  it's not display data, and neither is Plaid's own icon URL or prose
+  description - name and primaryName are curated, not Plaid's (see
+  lib/category-names.ts). Static seed data, no filters, no pagination.
 }

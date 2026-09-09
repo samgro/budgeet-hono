@@ -22,6 +22,20 @@
       "when": 1788975430614,
       "tag": "0002_lovely_lester",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788979267516,
+      "tag": "0003_add_category_names",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788979280462,
+      "tag": "0004_finalize_category_names",
+      "breakpoints": true
     }
   ]
 }

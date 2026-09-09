@@ -23,8 +23,8 @@ export async function seedCategories(database: DatabaseClient) {
         // "primary" is a Postgres unreserved keyword when used as an
         // identifier - quote it so `excluded.primary` can't be misparsed.
         primary: sql`excluded."primary"`,
-        description: sql`excluded.description`,
-        iconUrl: sql`excluded.icon_url`,
+        name: sql`excluded.name`,
+        primaryName: sql`excluded.primary_name`,
         pfcv1Detailed: sql`excluded.pfcv1_detailed`,
       },
     })

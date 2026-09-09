@@ -494,8 +494,13 @@ export const resolvedTransactions = pgView("resolved_transactions", {
 
 // ── resolved_accounts (view) ─────────────────────────────────────────────
 // Same rule as resolved_transactions: the account display name is a
-// precedence rule (ugc_name > raw_name), so it gets exactly one definition
+// precedence rule (ugc_name > a fallback), so it gets exactly one definition
 // here rather than a COALESCE repeated in every route that joins accounts.
+// A blank ugc_name - null or empty/whitespace-only, hence nullif(trim(...)) -
+// falls back to "institution rawName ••mask" (mask omitted when there is
+// none) rather than bare raw_name, since a bank's own account name is often
+// unhelpfully generic ("Ultimate Rewards®") without the bank and last-4 to
+// tell same-institution accounts apart.
 export const resolvedAccounts = pgView("resolved_accounts", {
   id: text("id"),
   name: text("name"),
@@ -510,7 +515,11 @@ export const resolvedAccounts = pgView("resolved_accounts", {
 }).as(sql`
   select
     account.id,
-    coalesce(account.ugc_name, account.raw_name) as name,
+    coalesce(
+      nullif(trim(account.ugc_name), ''),
+      account.raw_institution || ' ' || account.raw_name ||
+        case when account.raw_mask is null then '' else ' ••' || account.raw_mask end
+    ) as name,
     account.raw_name,
     account.raw_mask,
     account.raw_institution,

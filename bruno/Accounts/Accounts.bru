@@ -1,0 +1,22 @@
+meta {
+  name: Accounts
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/accounts
+  body: none
+  auth: inherit
+}
+
+docs {
+  Ordered by institution, then the resolved display name - never raw_name
+  directly, so a renamed account sorts where it's displayed. When ugc_name is
+  blank (null or whitespace-only), name falls back to "institution rawName
+  ••mask" (e.g. "Chase Ultimate Rewards® ••7614"; mask omitted when there
+  isn't one) rather than the bank's often-generic raw_name alone. Excludes
+  ugc_is_hidden accounts by default. Each row carries both name (resolved)
+  and rawName (the bank's), so a settings UI can show "renamed from …" and
+  offer a reset without a second call.
+}

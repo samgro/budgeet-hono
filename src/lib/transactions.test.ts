@@ -202,7 +202,7 @@ function baseTransaction(id: string, overrides: Partial<typeof transactions.$inf
 }
 
 describe("listTransactions / getTransaction", () => {
-  test("account.name uses ugc_name when set, raw_name otherwise", async () => {
+  test("account.name uses ugc_name when set, falls back to 'institution rawName' otherwise", async () => {
     await database
       .insert(transactions)
       .values(baseTransaction("txn-nick", { accountId: "account-nicknamed" }))
@@ -212,7 +212,7 @@ describe("listTransactions / getTransaction", () => {
     await database.insert(transactions).values(baseTransaction("txn-nonick"))
     const plainPage = await listTransactions(database, baseQuery({ accountId: "account-visible" }))
     expect(plainPage.transactions.find((row) => row.id === "txn-nonick")?.account.name).toBe(
-      "Checking",
+      "Chase Checking",
     )
   })
 

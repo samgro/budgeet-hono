@@ -3,6 +3,8 @@ import type { DatabaseClient } from "./db/client"
 import { errorResponse } from "./lib/errors"
 import type { SheetsClient } from "./lib/sheets"
 import { bearerAuth } from "./middleware/auth"
+import { createAccountsRoute } from "./routes/accounts"
+import { createCategoriesRoute } from "./routes/categories"
 import { health } from "./routes/health"
 import { createSyncRoute } from "./routes/sync"
 import { createTransactionsRoute } from "./routes/transactions"
@@ -20,6 +22,8 @@ export function createApp(apiToken: string, database: DatabaseClient, sheetsClie
   app.route("/health", health)
   app.route("/sync", createSyncRoute(database, sheetsClient))
   app.route("/transactions", createTransactionsRoute(database))
+  app.route("/accounts", createAccountsRoute(database))
+  app.route("/categories", createCategoriesRoute(database))
 
   app.notFound((context) => errorResponse(context, "NOT_FOUND", "No such route", 404))
 

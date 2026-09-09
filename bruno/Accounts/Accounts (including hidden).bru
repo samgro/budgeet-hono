@@ -1,0 +1,16 @@
+meta {
+  name: Accounts (including hidden)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/accounts?includeHidden=true
+  body: none
+  auth: inherit
+}
+
+docs {
+  includeHidden=true lifts the ugc_is_hidden filter. Compare against the
+  plain "Accounts" request to see which rows a hidden card added.
+}

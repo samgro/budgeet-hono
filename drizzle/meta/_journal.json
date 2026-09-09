@@ -15,6 +15,13 @@
       "when": 1788897899804,
       "tag": "0001_naive_charles_xavier",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788975430614,
+      "tag": "0002_lovely_lester",
+      "breakpoints": true
     }
   ]
 }

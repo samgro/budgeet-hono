@@ -1,0 +1,18 @@
+meta {
+  name: Categories
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/categories
+  body: none
+  auth: inherit
+}
+
+docs {
+  The Plaid PFC v2 taxonomy (~127 codes), grouped by primary - 18 groups,
+  each carrying one iconUrl and a detailed[] array. pfcv1Detailed (the
+  sync-side v1→v2 mapping) never appears here; it's not display data. Static
+  seed data, no filters, no pagination.
+}

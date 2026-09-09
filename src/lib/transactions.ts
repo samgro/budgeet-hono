@@ -1,8 +1,8 @@
 // GET /transactions and GET /transactions/:id. Reads only resolved_transactions
-// and resolved_accounts (schema.ts) - the ugc > ai > raw and ugc_name > raw_name
-// precedence rules are resolved there, once, per CLAUDE.md. budgets, categories,
-// and subscriptions carry no precedence rule, so joining them directly here
-// doesn't create a second definition of anything.
+// and resolved_accounts (schema.ts) - the ugc > ai > raw precedence rule and
+// the account display-name resolution rule are resolved there, once, per
+// CLAUDE.md. budgets, categories, and subscriptions carry no precedence rule,
+// so joining them directly here doesn't create a second definition of anything.
 
 import { and, desc, eq, exists, gte, ilike, isNotNull, isNull, lte, or, sql } from "drizzle-orm"
 import type { Database } from "../db/client"
